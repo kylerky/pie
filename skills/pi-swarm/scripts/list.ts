@@ -6,7 +6,7 @@
  *   deno run --allow-all list.ts [--json] [--session <name>]
  */
 
-import { Effect, Console, pipe } from "npm:effect";
+import { Console, Effect, pipe } from "npm:effect";
 import { computePaths, ShellError, SocketError } from "./lib/common.ts";
 import { listAllWindows, listWindows, swarmSessionName } from "./lib/tmux.ts";
 import { listControlSockets } from "./lib/control.ts";
@@ -41,15 +41,15 @@ const program = Effect.gen(function* () {
     [
       filterSession
         ? pipe(
-            listWindows(paths.defaultTmuxSocket, filterSession),
-            Effect.map((ws) =>
-              ws.map((w) => ({
-                sessionName: filterSession!,
-                windowName: w.name,
-                active: w.active,
-              })),
-            ),
-          )
+          listWindows(paths.defaultTmuxSocket, filterSession),
+          Effect.map((ws) =>
+            ws.map((w) => ({
+              sessionName: filterSession!,
+              windowName: w.name,
+              active: w.active,
+            }))
+          ),
+        )
         : listAllWindows(paths.defaultTmuxSocket),
       listControlSockets(paths.controlDir),
     ],
@@ -61,8 +61,9 @@ const program = Effect.gen(function* () {
   let socketIdx = 0;
 
   for (const w of allWindows) {
-    const matched =
-      socketIdx < aliveSockets.length ? aliveSockets[socketIdx++] : null;
+    const matched = socketIdx < aliveSockets.length
+      ? aliveSockets[socketIdx++]
+      : null;
     result.push({
       name: w.windowName,
       session: w.sessionName,
@@ -107,7 +108,10 @@ const program = Effect.gen(function* () {
     yield* Console.log(`Session: ${session}`);
     yield* Console.log("─".repeat(70));
 
-    const nameWidth = Math.max(...agents.map((r) => r.name.length), "AGENT".length);
+    const nameWidth = Math.max(
+      ...agents.map((r) => r.name.length),
+      "AGENT".length,
+    );
     const idWidth = Math.max(
       ...agents.map((r) => (r.sessionId ?? "\u2014").length),
       "SESSION ID".length,
@@ -124,8 +128,8 @@ const program = Effect.gen(function* () {
       const status = r.controlAlive
         ? "\u{1F7E2} alive"
         : r.tmuxStatus === "gone"
-          ? "\u{1F534} dead"
-          : "\u{1F7E1} waiting";
+        ? "\u{1F534} dead"
+        : "\u{1F7E1} waiting";
 
       yield* Console.log(
         "  " + r.name.padEnd(nameWidth) + sep +
@@ -137,7 +141,9 @@ const program = Effect.gen(function* () {
   }
 
   // Print attach info
-  const sessions = [...new Set(result.map((r) => r.session).filter((s) => s !== "?"))];
+  const sessions = [
+    ...new Set(result.map((r) => r.session).filter((s) => s !== "?")),
+  ];
   if (sessions.length > 0) {
     yield* Console.log("Attach commands:");
     for (const session of sessions) {

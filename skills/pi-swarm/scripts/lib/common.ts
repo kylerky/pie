@@ -8,7 +8,16 @@
  */
 
 import { join, resolve as pathResolve } from "jsr:@std/path";
-import { Effect, Data, Duration, pipe, Config, Stream, Chunk, Scope } from "npm:effect";
+import {
+  Chunk,
+  Config,
+  Data,
+  Duration,
+  Effect,
+  pipe,
+  Scope,
+  Stream,
+} from "npm:effect";
 import { Command, CommandExecutor } from "npm:@effect/platform";
 
 // ── Error types ──────────────────────────────────────────────────────────────
@@ -44,7 +53,7 @@ export const computePaths = Effect.gen(function* () {
   );
   const socketDir = yield* Config.string("PI_TMUX_SOCKET_DIR").pipe(
     Config.orElse(() =>
-      Config.string("TMPDIR").pipe(Config.withDefault("/tmp")),
+      Config.string("TMPDIR").pipe(Config.withDefault("/tmp"))
     ),
   );
   const tmuxSocketDir = join(socketDir, "pi-tmux-sockets");
@@ -69,7 +78,7 @@ const drainToText = <E>(
     Effect.map((chunk) =>
       Chunk.toReadonlyArray(chunk)
         .map((u) => textDecoder.decode(u))
-        .join(""),
+        .join("")
     ),
   );
 
@@ -103,7 +112,11 @@ export const shRaw = (
       }),
     ),
     Effect.catchAll(() =>
-      Effect.succeed({ ok: false, stdout: "", stderr: "failed to spawn process" }),
+      Effect.succeed({
+        ok: false,
+        stdout: "",
+        stderr: "failed to spawn process",
+      })
     ),
   );
 
@@ -117,15 +130,13 @@ export const sh = (
   pipe(
     shRaw(cmd, args),
     Effect.flatMap((result) =>
-      result.ok
-        ? Effect.succeed(result.stdout)
-        : Effect.fail(
-            new ShellError({
-              cmd,
-              args: [...args],
-              stderr: result.stderr || "(no stderr)",
-            }),
-          ),
+      result.ok ? Effect.succeed(result.stdout) : Effect.fail(
+        new ShellError({
+          cmd,
+          args: [...args],
+          stderr: result.stderr || "(no stderr)",
+        }),
+      )
     ),
   );
 

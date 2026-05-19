@@ -7,7 +7,7 @@
  * requirements needed by the CLI stack.
  */
 
-import { Effect, Layer, Scope, Stream, Sink, pipe, Chunk } from "npm:effect";
+import { Chunk, Effect, Layer, pipe, Scope, Sink, Stream } from "npm:effect";
 import { Command, CommandExecutor } from "npm:@effect/platform";
 import { FileSystem } from "npm:@effect/platform/FileSystem";
 import { Path } from "npm:@effect/platform/Path";
@@ -53,14 +53,14 @@ const makeDenoCommandExecutor = (): CommandExecutor.CommandExecutor =>
           [CommandExecutor.ProcessTypeId]: CommandExecutor.ProcessTypeId,
           pid: CommandExecutor.ProcessId(proc.pid),
           exitCode: Effect.promise(() =>
-            proc.status.then((s) => CommandExecutor.ExitCode(s.code)),
+            proc.status.then((s) => CommandExecutor.ExitCode(s.code))
           ),
           isRunning: Effect.sync(() => true), // best effort
           kill: (signal?: CommandExecutor.Signal) =>
             Effect.promise(() =>
               Promise.resolve(
                 void proc.kill((signal as Deno.Signal) ?? "SIGTERM"),
-              ),
+              )
             ) as Effect.Effect<void, BadArgument>,
           stdout: Stream.fromReadableStream(
             () => proc.stdout,

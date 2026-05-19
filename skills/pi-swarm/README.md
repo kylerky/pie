@@ -1,6 +1,8 @@
 # Pi Swarm
 
-Spawn and manage swarms of Pi instances — isolated subagents and cooperative multi-agent swarms — in tmux sessions with inter-session communication via Unix domain socket control channels.
+Spawn and manage swarms of Pi instances — isolated subagents and cooperative
+multi-agent swarms — in tmux sessions with inter-session communication via Unix
+domain socket control channels.
 
 ## Installation
 
@@ -20,7 +22,8 @@ pi install git:github.com/your-org/pi-swarm
 
 ## Usage
 
-Pi automatically loads this skill. When working on complex or parallelizable tasks, Pi will proactively spawn subagents or orchestrate swarms.
+Pi automatically loads this skill. When working on complex or parallelizable
+tasks, Pi will proactively spawn subagents or orchestrate swarms.
 
 ```bash
 # Spawn a swarm member

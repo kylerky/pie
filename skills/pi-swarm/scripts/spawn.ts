@@ -12,20 +12,17 @@
  */
 
 import { join } from "jsr:@std/path";
-import { Effect, Console } from "npm:effect";
+import { Console, Effect } from "npm:effect";
 import {
   computePaths,
-  ShellError,
-  SocketError,
+  defaultCwd,
   ensureDir,
   sanitizeName,
-  defaultCwd,
+  ShellError,
+  SocketError,
 } from "./lib/common.ts";
 import { createWindow, killWindow, swarmSessionName } from "./lib/tmux.ts";
-import {
-  getSessionIdFromPane,
-  sendInitialPrompt,
-} from "./lib/control.ts";
+import { getSessionIdFromPane, sendInitialPrompt } from "./lib/control.ts";
 import { platformLayer } from "./lib/cli.ts";
 
 // ── Argument parsing ─────────────────────────────────────────────────────────
@@ -129,24 +126,25 @@ const program = Effect.gen(function* () {
           Effect.catchAll(() => Effect.void),
         );
         return yield* Effect.fail(e);
-      }),
+      })
     ),
   );
 
   // Send the initial prompt via the control socket
   yield* Console.error(`Sending initial prompt to ${parsed.name}...`);
-  yield* sendInitialPrompt(paths.controlDir, sessionId, parsed.prompt, 15_000).pipe(
-    Effect.catchAll((e) =>
-      Effect.gen(function* () {
-        yield* Console.error(
-          `Warning: Failed to send initial prompt: ${e.message}`,
-        );
-        yield* Console.error(
-          "The agent is running but may be idle. You can send a prompt with send.ts.",
-        );
-      }),
-    ),
-  );
+  yield* sendInitialPrompt(paths.controlDir, sessionId, parsed.prompt, 15_000)
+    .pipe(
+      Effect.catchAll((e) =>
+        Effect.gen(function* () {
+          yield* Console.error(
+            `Warning: Failed to send initial prompt: ${e.message}`,
+          );
+          yield* Console.error(
+            "The agent is running but may be idle. You can send a prompt with send.ts.",
+          );
+        })
+      ),
+    );
 
   const result = {
     sessionId,

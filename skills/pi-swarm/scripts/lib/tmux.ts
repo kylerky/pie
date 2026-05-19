@@ -8,7 +8,7 @@
 
 import { Effect, pipe } from "npm:effect";
 import { CommandExecutor } from "npm:@effect/platform";
-import { sh, shRaw, ShellError, sanitizeName } from "./common.ts";
+import { sanitizeName, sh, ShellError, shRaw } from "./common.ts";
 
 // ── Session naming ───────────────────────────────────────────────────────────
 
@@ -52,11 +52,16 @@ export const createWindow = (params: {
       // the session between our hasSession check and now, catch the "duplicate
       // session" error and fall through to new-window.
       const newSessionResult = yield* shRaw("tmux", [
-        "-S", params.tmuxSocket,
-        "new-session", "-d",
-        "-s", params.sessionName,
-        "-c", params.cwd,
-        "-n", params.windowName,
+        "-S",
+        params.tmuxSocket,
+        "new-session",
+        "-d",
+        "-s",
+        params.sessionName,
+        "-c",
+        params.cwd,
+        "-n",
+        params.windowName,
         "--",
         params.shellCommand,
         ...params.shellArgs,
@@ -70,11 +75,15 @@ export const createWindow = (params: {
       // exists (race with concurrent spawn). If so, retry as new-window.
       if (newSessionResult.stderr.includes("duplicate session")) {
         yield* sh("tmux", [
-          "-S", params.tmuxSocket,
+          "-S",
+          params.tmuxSocket,
           "new-window",
-          "-t", params.sessionName,
-          "-n", params.windowName,
-          "-c", params.cwd,
+          "-t",
+          params.sessionName,
+          "-n",
+          params.windowName,
+          "-c",
+          params.cwd,
           "--",
           params.shellCommand,
           ...params.shellArgs,
@@ -86,17 +95,28 @@ export const createWindow = (params: {
       return yield* Effect.fail(
         new ShellError({
           cmd: "tmux",
-          args: ["new-session", "-d", "-s", params.sessionName, "-n", params.windowName],
+          args: [
+            "new-session",
+            "-d",
+            "-s",
+            params.sessionName,
+            "-n",
+            params.windowName,
+          ],
           stderr: newSessionResult.stderr || "(no stderr)",
         }),
       );
     } else {
       yield* sh("tmux", [
-        "-S", params.tmuxSocket,
+        "-S",
+        params.tmuxSocket,
         "new-window",
-        "-t", params.sessionName,
-        "-n", params.windowName,
-        "-c", params.cwd,
+        "-t",
+        params.sessionName,
+        "-n",
+        params.windowName,
+        "-c",
+        params.cwd,
         "--",
         params.shellCommand,
         ...params.shellArgs,
@@ -118,9 +138,11 @@ export const listAllWindows = (
 > =>
   Effect.gen(function* () {
     const sessionsResult = yield* shRaw("tmux", [
-      "-S", tmuxSocket,
+      "-S",
+      tmuxSocket,
       "list-sessions",
-      "-F", "#{session_name}",
+      "-F",
+      "#{session_name}",
     ]);
 
     if (!sessionsResult.ok) return [];
@@ -131,13 +153,18 @@ export const listAllWindows = (
 
     if (sessions.length === 0) return [];
 
-    const results: Array<{ sessionName: string; windowName: string; active: boolean }> = [];
+    const results: Array<
+      { sessionName: string; windowName: string; active: boolean }
+    > = [];
     for (const session of sessions) {
       const windowsResult = yield* shRaw("tmux", [
-        "-S", tmuxSocket,
+        "-S",
+        tmuxSocket,
         "list-windows",
-        "-t", session,
-        "-F", "#{window_name}\t#{window_active}",
+        "-t",
+        session,
+        "-F",
+        "#{window_name}\t#{window_active}",
       ]);
       if (windowsResult.ok) {
         for (const line of windowsResult.stdout.split("\n")) {
@@ -211,18 +238,22 @@ export const killWindow = (
     if (!target) return false;
 
     yield* sh("tmux", [
-      "-S", tmuxSocket,
+      "-S",
+      tmuxSocket,
       "kill-window",
-      "-t", `${sessionName}:${windowName}`,
+      "-t",
+      `${sessionName}:${windowName}`,
     ]);
 
     // If no windows left, kill the session too
     const remaining = yield* listWindows(tmuxSocket, sessionName);
     if (remaining.length === 0) {
       yield* sh("tmux", [
-        "-S", tmuxSocket,
+        "-S",
+        tmuxSocket,
         "kill-session",
-        "-t", sessionName,
+        "-t",
+        sessionName,
       ]).pipe(Effect.catchAll(() => Effect.void));
     }
 

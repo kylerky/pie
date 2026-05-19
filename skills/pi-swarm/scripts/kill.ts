@@ -10,13 +10,13 @@
  * in the session-control directory.
  */
 
-import { join, resolve, dirname } from "jsr:@std/path";
-import { Effect, Console, pipe } from "npm:effect";
+import { dirname, join, resolve } from "jsr:@std/path";
+import { Console, Effect, pipe } from "npm:effect";
 import {
   computePaths,
+  removeIfExists,
   ShellError,
   SocketError,
-  removeIfExists,
 } from "./lib/common.ts";
 import { killWindow, listAllWindows, swarmSessionName } from "./lib/tmux.ts";
 import { platformLayer } from "./lib/cli.ts";
@@ -35,9 +35,7 @@ const cleanOrphanedSymlinks = (
         }
         return result;
       }),
-      Effect.catchAll((): Effect.Effect<Deno.DirEntry[]> =>
-        Effect.succeed([]),
-      ),
+      Effect.catchAll((): Effect.Effect<Deno.DirEntry[]> => Effect.succeed([])),
     );
 
     for (const entry of entries) {
@@ -137,16 +135,22 @@ const program = Effect.gen(function* () {
     );
   }
 
-  yield* pipe(cleanOrphanedSymlinks(paths.controlDir), Effect.catchAll(() => Effect.void));
+  yield* pipe(
+    cleanOrphanedSymlinks(paths.controlDir),
+    Effect.catchAll(() => Effect.void),
+  );
 });
 
 // ── Entry point ──────────────────────────────────────────────────────────────
 Effect.runPromise(program.pipe(Effect.provide(platformLayer))).catch(
   (e: unknown) => {
-  if (e instanceof ShellError || e instanceof SocketError || e instanceof Error) {
-    console.error(e.message);
-  } else {
-    console.error("Unexpected error:", e);
-  }
-  Deno.exit(1);
-});
+    if (
+      e instanceof ShellError || e instanceof SocketError || e instanceof Error
+    ) {
+      console.error(e.message);
+    } else {
+      console.error("Unexpected error:", e);
+    }
+    Deno.exit(1);
+  },
+);

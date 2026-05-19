@@ -9,7 +9,7 @@
 
 import { join } from "jsr:@std/path";
 import { Effect, pipe } from "npm:effect";
-import { SocketError, sleep, sh, ShellError } from "./common.ts";
+import { sh, ShellError, sleep, SocketError } from "./common.ts";
 
 // ── Connection management ────────────────────────────────────────────────────
 
@@ -21,18 +21,15 @@ const tryConnect = (
   pipe(
     Effect.tryPromise({
       try: () => Deno.connect({ path: socketPath, transport: "unix" }),
-      catch: (e) =>
-        new SocketError({ message: `connect: ${String(e)}` }),
+      catch: (e) => new SocketError({ message: `connect: ${String(e)}` }),
     }),
     Effect.timeout(timeoutMs),
     Effect.catchAll((e) =>
       Effect.fail(
-        e instanceof SocketError
-          ? e
-          : new SocketError({
-              message: `connection timed out after ${timeoutMs}ms`,
-            }),
-      ),
+        e instanceof SocketError ? e : new SocketError({
+          message: `connection timed out after ${timeoutMs}ms`,
+        }),
+      )
     ),
   );
 
@@ -77,8 +74,7 @@ export const writeLine = (
     try: async () => {
       await conn.write(textEncoder.encode(data + "\n"));
     },
-    catch: (e) =>
-      new SocketError({ message: `write failed: ${String(e)}` }),
+    catch: (e) => new SocketError({ message: `write failed: ${String(e)}` }),
   });
 
 /** Async generator yielding newline-delimited JSON lines from a connection. */
@@ -129,7 +125,7 @@ export const listSocketFiles = (
       return socks;
     }),
     Effect.catchAll((): Effect.Effect<Set<string>> =>
-      Effect.succeed(new Set()),
+      Effect.succeed(new Set())
     ),
   );
 
@@ -148,14 +144,17 @@ export const getSessionIdFromPane = (
 ): Effect.Effect<string, SocketError | ShellError> =>
   Effect.gen(function* () {
     const deadline = Date.now() + timeoutMs;
-    const uuidRe = /session\s+([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})/i;
+    const uuidRe =
+      /session\s+([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})/i;
 
     while (Date.now() < deadline) {
       const output = yield* sh("tmux", [
-        "-S", tmuxSocket,
+        "-S",
+        tmuxSocket,
         "capture-pane",
         "-p",
-        "-t", `${sessionName}:${windowName}`,
+        "-t",
+        `${sessionName}:${windowName}`,
       ]);
 
       const match = output.match(uuidRe);
@@ -168,7 +167,8 @@ export const getSessionIdFromPane = (
 
     return yield* Effect.fail(
       new SocketError({
-        message: `Timed out after ${timeoutMs}ms waiting for session ID in pane output`,
+        message:
+          `Timed out after ${timeoutMs}ms waiting for session ID in pane output`,
       }),
     );
   });
@@ -219,9 +219,7 @@ export const listControlSockets = (
         }
         return result;
       }),
-      Effect.catchAll((): Effect.Effect<Deno.DirEntry[]> =>
-        Effect.succeed([]),
-      ),
+      Effect.catchAll((): Effect.Effect<Deno.DirEntry[]> => Effect.succeed([])),
     );
 
     for (const entry of entries) {
@@ -264,59 +262,62 @@ export const sendInitialPrompt = (
   message: string,
   timeoutMs = 10_000,
 ): Effect.Effect<void, SocketError> =>
-  useConnection(socketPath(controlDir, sessionId), timeoutMs, (conn) =>
-    Effect.gen(function* () {
-      const cmd = JSON.stringify({
-        type: "send",
-        message,
-        mode: "steer",
-      });
-      yield* writeLine(conn, cmd);
+  useConnection(
+    socketPath(controlDir, sessionId),
+    timeoutMs,
+    (conn) =>
+      Effect.gen(function* () {
+        const cmd = JSON.stringify({
+          type: "send",
+          message,
+          mode: "steer",
+        });
+        yield* writeLine(conn, cmd);
 
-      // Wait for acknowledgement
-      yield* Effect.async<void, SocketError>((resolve) => {
-        (async () => {
-          try {
-            for await (const line of readLines(conn)) {
-              const msg = JSON.parse(line);
-              if (
-                msg.type === "response" &&
-                msg.command === "send"
-              ) {
-                if (msg.success) {
-                  resolve(Effect.succeed(undefined));
-                } else {
-                  resolve(
-                    Effect.fail(
-                      new SocketError({
-                        message: `Send failed: ${msg.error}`,
-                      }),
-                    ),
-                  );
+        // Wait for acknowledgement
+        yield* Effect.async<void, SocketError>((resolve) => {
+          (async () => {
+            try {
+              for await (const line of readLines(conn)) {
+                const msg = JSON.parse(line);
+                if (
+                  msg.type === "response" &&
+                  msg.command === "send"
+                ) {
+                  if (msg.success) {
+                    resolve(Effect.succeed(undefined));
+                  } else {
+                    resolve(
+                      Effect.fail(
+                        new SocketError({
+                          message: `Send failed: ${msg.error}`,
+                        }),
+                      ),
+                    );
+                  }
+                  return;
                 }
-                return;
               }
+              resolve(
+                Effect.fail(
+                  new SocketError({
+                    message:
+                      "Connection closed before receiving acknowledgement",
+                  }),
+                ),
+              );
+            } catch (e) {
+              resolve(
+                Effect.fail(
+                  new SocketError({
+                    message: `sendInitialPrompt: ${String(e)}`,
+                  }),
+                ),
+              );
             }
-            resolve(
-              Effect.fail(
-                new SocketError({
-                  message:
-                    "Connection closed before receiving acknowledgement",
-                }),
-              ),
-            );
-          } catch (e) {
-            resolve(
-              Effect.fail(
-                new SocketError({
-                  message: `sendInitialPrompt: ${String(e)}`,
-                }),
-              ),
-            );
-          }
-        })();
-      });
-    }),
+          })();
+        });
+      }),
   );
 
 // ── Path helpers ─────────────────────────────────────────────────────────────
