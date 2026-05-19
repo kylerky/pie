@@ -112,43 +112,15 @@ const program = Effect.gen(function* () {
               msg.type === "event" &&
               msg.event === "agent_end"
             ) {
-              // agent_end carries messages directly (RPC format) or in .data (session-control format)
-              const messages: Array<Record<string, unknown>> | undefined =
-                msg.messages || msg.data?.messages;
-              if (messages && messages.length > 0) {
-                // Find last assistant message
-                const lastAssistant = [...messages]
-                  .reverse()
-                  .find(
-                    (m: Record<string, unknown>) => m.role === "assistant",
-                  );
-                if (lastAssistant) {
-                  const content = lastAssistant.content;
-                  if (typeof content === "string") {
-                    console.log(content);
-                  } else if (Array.isArray(content)) {
-                    const textBlocks = (
-                      content as Array<Record<string, unknown>>
-                    )
-                      .filter((b) => b.type === "text")
-                      .map((b) => b.text as string)
-                      .join("\n");
-                    console.log(
-                      textBlocks ||
-                        "(assistant message without text)",
-                    );
-                  } else {
-                    console.log(
-                      "(assistant message without text content)",
-                    );
-                  }
-                } else {
-                  console.log(
-                    "(agent completed, no assistant message)",
-                  );
-                }
+              // agent_end event carries a single message in .data.message
+              // (the control extension sends { message: ExtractedMessage })
+              const message = msg.data?.message;
+              if (message && typeof message.content === "string") {
+                console.log(message.content || "(assistant message is empty)");
               } else {
-                console.log("(agent completed, no messages)");
+                console.log(
+                  "(agent completed, no assistant message)",
+                );
               }
               Deno.exit(0);
             }
