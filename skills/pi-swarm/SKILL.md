@@ -137,7 +137,8 @@ Kills the window. Last window kills the session. Sweeps orphaned symlinks.
 deno run --allow-all wait.ts <session-id> [--timeout <seconds>]
 ```
 
-Blocks until all turns complete (default timeout: 300s).
+Blocks until all turns complete (default timeout: 300s). Do NOT use `&` to send
+the `wait.ts` command to the background.
 
 ## Swarm Workflow Example
 
