@@ -140,9 +140,9 @@ deno run --allow-all wait.ts abc-123
 deno run --allow-all wait.ts def-456
 
 # On timeout: verify liveness, wait again, steer only as last resort
-deno run --allow-all wait.ts def-456 --timeout 120  # times out
+deno run --allow-all wait.ts def-456 --timeout 300  # times out
 deno run --allow-all list.ts --session explore       # still alive → wait again
-deno run --allow-all wait.ts def-456 --timeout 180  # second wait
+deno run --allow-all wait.ts def-456 --timeout 320  # second wait
 # Only after second timeout, steer:
 # deno run --allow-all send.ts def-456 "Any blockers?" --mode steer --wait
 
