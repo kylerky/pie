@@ -88,7 +88,7 @@ exhaustion.
 
 ## Communication Architecture
 
-All communication uses Pi's built-in session-control mechanism. Swarm members
+All communication uses Pi's control extension (in agent-stuff). Swarm members
 are started with `--session-control`, which creates a Unix domain socket at
 `~/.pi/session-control/<session-id>.sock`.
 
@@ -106,10 +106,13 @@ Use the `send_to_session` tool:
 send_to_session(sessionId: "<session-id>", action: "send", message: "...")
 ```
 
-Add `wait_until: "turn_end"` to block until the member finishes its turn and
-receive the response. Use `action: "get_message"` to fetch just the last
-assistant message. Use `action: "get_summary"` for an AI-generated summary of
-activity.
+Add `wait_until: "turn_end"` to block until the member finishes its current
+turn and receive the response. Use `wait_until: "agent_end"` to block until
+the full agent loop completes (useful for multi-turn tasks). Both modes use the
+subscribe-before-send pattern internally to avoid race conditions.
+
+Use `action: "get_message"` to fetch just the last assistant message. Use
+`action: "get_summary"` for an AI-generated summary of activity.
 
 ### Swarm Member → Parent
 
@@ -130,27 +133,35 @@ swarm:
 > them questions and share findings. Coordinate autonomously — the parent does
 > not need to relay messages."
 
+## Event Synchronization
+
+The control extension emits two events for subscribers:
+
+- **`turn_end`** — fires after each individual turn (one LLM response + tool calls).
+- **`agent_end`** — fires once when the full agent loop completes (all turns). Use for multi-turn tasks.
+
+**Always subscribe before sending** to avoid race conditions:
+
+```
+1. write: { type: "subscribe", event: "agent_end" }
+2. write: { type: "send", message: "..." }      // turn starts AFTER subscription is registered
+3. read: wait for agent_end event
+```
+
+The server processes both commands synchronously before queuing the agent turn,
+so the subscription is guaranteed to exist when the event fires.
+
+`send_to_session` with `wait_until` and `send.ts --wait` both use this pattern
+internally. `wait.ts` subscribes to `agent_end` with a `get_message` fallback
+for the case where the agent already finished before connection (outputs a
+warning when fallback is used).
+
 ## Scripts
 
 All scripts live in `scripts/` and are written in TypeScript for Deno using the
 [Effect-TS](https://effect.website/) framework for structured error handling,
 resource safety, and composability. Run with
 `deno run --allow-all scripts/<script>.ts`.
-
-### Shared libraries (`scripts/lib/`)
-
-- **`lib/common.ts`** — Path computation (Effect's `Config` reads env vars,
-  `@std/path` joins paths), shell execution (`sh` / `shRaw` via `Deno.Command`),
-  name sanitization, and tagged error types (`ShellError`, `SocketError`,
-  `TimeoutError`).
-- **`lib/tmux.ts`** — Tmux session and window management: `createWindow`,
-  `killWindow`, `listWindows`, `listAllWindows`, `hasSession`,
-  `swarmSessionName`.
-- **`lib/control.ts`** — Session-control socket communication: `useConnection`
-  (guaranteed cleanup via `Effect.acquireRelease` + `Effect.scoped`),
-  `writeLine`, `readLines` (async generator), `listSocketFiles`,
-  `waitForNewSocket`, `sendInitialPrompt`, `listControlSockets`,
-  `isSocketAlive`, `socketPath`.
 
 ### spawn.ts — Spawn a new swarm member
 
@@ -213,8 +224,8 @@ deno run --allow-all scripts/send.ts <session-id> <message> [--mode steer|follow
 ```
 
 Sends a message directly to a control socket. Use `--wait` to block until
-`agent_end` (agent fully completes all turns). The connection is managed via
-`acquireRelease` for guaranteed cleanup.
+`agent_end` using the subscribe-before-send pattern (see Event Synchronization).
+The connection is managed via `acquireRelease` for guaranteed cleanup.
 
 ### kill.ts — Terminate a swarm member
 
@@ -233,20 +244,17 @@ session, the session is also killed. Also sweeps orphaned symlinks in
 deno run --allow-all scripts/wait.ts <session-id> [--timeout <seconds>]
 ```
 
-Subscribes to `agent_end` on the target session's control socket and blocks
-until the agent completes all turns (full processing of the initial or queued
-message). Outputs the last assistant message text. Times out after the given
-seconds (default 300).
-
-Use this after `spawn.ts` to block until the spawned agent has fully completed
-its task, which may span multiple turns.
+Blocks until the agent completes all turns. Subscribes to `agent_end` with a
+`get_message` fallback: if the agent already finished before connection, the
+cached message is used (with a warning to stderr). Times out after the given
+seconds (default 300). Call immediately after `spawn.ts` to minimize the race
+window.
 
 ## Swarm Workflow Example
 
 ```bash
-# 1. Spawn a swarm for parallel exploration, all in session "explore"
-#    (--cwd ensures subagents start in the correct project directory)
-#    Session will be "pi-swarm-explore"
+# ── Spawn agents in parallel ──────────────────────────────────────
+
 deno run --allow-all scripts/spawn.ts --cwd /home/user/project --session explore researcher \
   "You are in a Pi swarm. Research best practices for Rust error handling."
 # → {"sessionId":"abc-123","tmuxSession":"pi-swarm-explore","windowName":"researcher",...}
@@ -255,27 +263,33 @@ deno run --allow-all scripts/spawn.ts --cwd /home/user/project --session explore
   "You are in a Pi swarm. Implement error types in src/errors.rs. Coordinate with researcher at abc-123."
 # → {"sessionId":"def-456","tmuxSession":"pi-swarm-explore","windowName":"implementer",...}
 
-# Or spawn without --session for a random isolated session:
-deno run --allow-all scripts/spawn.ts helper "Run some background task."
-# → {"sessionId":"...","tmuxSession":"pi-swarm-a1b2c3d4","windowName":"helper",...}
+# ── Wait for results (subscribe-before-send atomic pattern) ───────
+# wait.ts subscribes to agent_end FIRST, then the agent turn proceeds.
+# If the agent already finished, the get_message fallback is used with a warning.
 
-# 2. Check swarm status (all agents in one session)
-deno run --allow-all scripts/list.ts
-# Session: pi-swarm-explore
-#   AGENT          SESSION ID                            STATUS
-#   researcher     abc-123...                            🟢 alive
-#   implementer    def-456...                            🟢 alive
+deno run --allow-all scripts/wait.ts abc-123
+# → (researcher's final output)
 
-# 3. Monitor ALL agents in the session (switch windows with C-b n / C-b p)
-tmux -S /tmp/pi-tmux-sockets/pi-swarm.sock attach -t pi-swarm-explore
+deno run --allow-all scripts/wait.ts def-456
+# → (implementer's final output)
 
-# 4. Or monitor a specific agent
-tmux -S /tmp/pi-tmux-sockets/pi-swarm.sock attach -t pi-swarm-explore:researcher
+# ── Follow-up with send_to_session ────────────────────────────────
+# The send_to_session tool uses the same atomic subscribe-before-send pattern
+# via sendRpcCommand(waitForEvent) — no race between send and subscribe.
+#
+# Pi should use: send_to_session(
+#   sessionId: "abc-123",
+#   action: "send",
+#   message: "Can you also check async error handling?",
+#   wait_until: "agent_end"
+# )
 
-# 5. Send a follow-up
-# (via send_to_session tool: action=send, sessionId=abc-123, message="Any updates?")
+# Or via the CLI script (also subscribe-before-send internally):
+deno run --allow-all scripts/send.ts abc-123 "Check async error handling too" --wait
+# → (researcher's response)
 
-# 6. Clean up individual agents
+# ── Clean up ──────────────────────────────────────────────────────
+
 deno run --allow-all scripts/kill.ts --session explore researcher
 deno run --allow-all scripts/kill.ts --session explore implementer
 # (session pi-swarm-explore is automatically killed when last window dies)
@@ -296,22 +310,18 @@ deno run --allow-all scripts/kill.ts --session explore implementer
    other members' session IDs and describe the communication topology.
 6. **Choose the right pattern**: use simple delegation when the parent should
    coordinate; use swarm mode when agents should communicate peer-to-peer.
-7. **Wait appropriately**. Use `wait.ts` to block until the spawned agent fully
-   completes (agent_end — all turns). For `send_to_session`, use
-   `wait_until: "turn_end"` when you need the response immediately;
-   fire-and-forget with `mode: "follow_up"` for background notifications.
+7. **Wait appropriately**:
+   - Use `wait_until: "agent_end"` on `send_to_session` for multi-turn tasks,
+     `"turn_end"` for single-response calls. Both use atomic subscribe-before-send.
+   - `wait.ts <id>` blocks until the agent finishes (call right after `spawn.ts`).
+   - Use `send_to_session` with `mode: "follow_up"` for fire-and-forget background messages.
 8. **Clean up**. Always kill swarm members when their work is done.
 9. **Limit parallelism**. Never spawn more than 5 members concurrently unless
    the user explicitly asks for massive parallelism.
 10. **Verify liveness** before sending. Tmux sessions can die; use `list.ts` to
     confirm a member is still running.
-11. **Use tmux attach to monitor the whole session**:
-    ```
-    tmux -S /tmp/pi-tmux-sockets/pi-swarm.sock attach -t pi-swarm-<session>
-    ```
-    Switch windows with `C-b n` (next) and `C-b p` (previous).
-12. **Handle failures gracefully**. If a member doesn't respond or its socket is
+11. **Handle failures gracefully**. If a member doesn't respond or its socket is
     gone, check the tmux pane output with
     `tmux capture-pane -t pi-swarm-<session>:<window>` and restart if needed.
-13. **Close the swarm loop**: when a swarm's work is complete, have members
+12. **Close the swarm loop**: when a swarm's work is complete, have members
     report back to the parent with final results before being killed.

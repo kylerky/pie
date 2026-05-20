@@ -119,13 +119,25 @@ const program = Effect.gen(function* () {
         return;
       }
 
-      // --wait mode: subscribe to agent_end
+      // --wait mode: atomic subscribe-before-send
+      // Write subscribe FIRST so the subscription is registered before
+      // the send triggers the turn. Both writes happen before we start
+      // reading, so the server processes them in the same receive buffer
+      // — no race window between subscription and turn start.
       const subCmd = JSON.stringify({
         type: "subscribe",
         event: "agent_end",
       });
       yield* writeLine(conn, subCmd);
 
+      const waitSendCmd = JSON.stringify({
+        type: "send",
+        message: parsed.message,
+        mode: parsed.mode,
+      });
+      yield* writeLine(conn, waitSendCmd);
+
+      let subscribeOk = false;
       let sendOk = false;
 
       yield* Effect.tryPromise({
@@ -135,24 +147,27 @@ const program = Effect.gen(function* () {
 
             if (
               msg.type === "response" &&
-              msg.command === "send"
+              msg.command === "subscribe"
             ) {
               if (!msg.success) {
-                console.error(`Send failed: ${msg.error}`);
-                Deno.exit(1);
+                throw new SocketError({
+                  message: `Subscribe failed: ${msg.error}`,
+                });
               }
-              sendOk = true;
+              subscribeOk = true;
               continue;
             }
 
             if (
               msg.type === "response" &&
-              msg.command === "subscribe"
+              msg.command === "send"
             ) {
               if (!msg.success) {
-                console.error(`Subscribe failed: ${msg.error}`);
-                Deno.exit(1);
+                throw new SocketError({
+                  message: `Send failed: ${msg.error}`,
+                });
               }
+              sendOk = true;
               continue;
             }
 
@@ -160,7 +175,7 @@ const program = Effect.gen(function* () {
               msg.type === "event" &&
               msg.event === "agent_end"
             ) {
-              if (sendOk) {
+              if (subscribeOk && sendOk) {
                 // agent_end event carries a single message in .data.message
                 // (the control extension sends { message: ExtractedMessage })
                 const message = msg.data?.message;
@@ -175,15 +190,18 @@ const program = Effect.gen(function* () {
               }
             }
           }
-          console.error(
-            "Connection closed before receiving agent_end event.",
-          );
-          Deno.exit(1);
+
+          throw new SocketError({
+            message:
+              "Connection closed before receiving agent_end event.",
+          });
         },
         catch: (e) =>
-          new SocketError({
-            message: `wait for agent_end: ${String(e)}`,
-          }),
+          e instanceof SocketError
+            ? e
+            : new SocketError({
+              message: `wait for agent_end: ${String(e)}`,
+            }),
       });
     }));
 });

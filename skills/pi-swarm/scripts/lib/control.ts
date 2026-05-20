@@ -10,6 +10,7 @@
 import { join } from "jsr:@std/path";
 import { Effect, pipe } from "npm:effect";
 import { sh, ShellError, sleep, SocketError } from "./common.ts";
+import { CommandExecutor } from "npm:@effect/platform";
 
 // ── Connection management ────────────────────────────────────────────────────
 
@@ -141,7 +142,7 @@ export const getSessionIdFromPane = (
   sessionName: string,
   windowName: string,
   timeoutMs = 30_000,
-): Effect.Effect<string, SocketError | ShellError> =>
+): Effect.Effect<string, SocketError | ShellError, CommandExecutor.CommandExecutor> =>
   Effect.gen(function* () {
     const deadline = Date.now() + timeoutMs;
     const uuidRe =

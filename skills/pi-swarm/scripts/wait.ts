@@ -74,19 +74,42 @@ const program = Effect.gen(function* () {
 
   yield* useConnection(path, 5_000, (conn) =>
     Effect.gen(function* () {
+      // Subscribe to agent_end first — this guarantees we catch the event
+      // if the agent is still processing.
       const subCmd = JSON.stringify({
         type: "subscribe",
         event: "agent_end",
       });
       yield* writeLine(conn, subCmd);
 
+      // Also request the current message as a fallback.
+      // If the agent already finished before we connected, agent_end
+      // will never fire — but get_message returns the final result.
+      const getMsgCmd = JSON.stringify({
+        type: "get_message",
+      });
+      yield* writeLine(conn, getMsgCmd);
+
       const lines = readLines(conn);
       const deadline = Date.now() + parsed.timeoutSec * 1000;
+
+      let subscribeOk = false;
+      let fallbackMessage: string | null = null;
 
       yield* Effect.tryPromise({
         try: async () => {
           for await (const line of lines) {
             if (Date.now() > deadline) {
+              // Timeout — if we have a fallback message, use it.
+              // This handles the case where the agent was already idle
+              // when we connected (agent_end already happened).
+              if (subscribeOk && fallbackMessage !== null) {
+                console.error(
+                  "Warning: agent_end not received within timeout (agent may have finished before wait.ts connected). Using cached get_message as fallback.",
+                );
+                console.log(fallbackMessage || "(assistant message is empty)");
+                Deno.exit(0);
+              }
               throw new TimeoutError({
                 message:
                   `Timed out after ${parsed.timeoutSec}s waiting for agent_end`,
@@ -105,6 +128,18 @@ const program = Effect.gen(function* () {
                   message: `Subscribe failed: ${msg.error}`,
                 });
               }
+              subscribeOk = true;
+              continue;
+            }
+
+            if (
+              msg.type === "response" &&
+              msg.command === "get_message"
+            ) {
+              const data = msg.data as { message?: { content?: string } } | undefined;
+              if (data?.message && typeof data.message.content === "string") {
+                fallbackMessage = data.message.content;
+              }
               continue;
             }
 
@@ -112,11 +147,13 @@ const program = Effect.gen(function* () {
               msg.type === "event" &&
               msg.event === "agent_end"
             ) {
-              // agent_end event carries a single message in .data.message
-              // (the control extension sends { message: ExtractedMessage })
+              // agent_end event carries the final message in .data.message
+              // Prefer the event data over the fallback from get_message.
               const message = msg.data?.message;
               if (message && typeof message.content === "string") {
                 console.log(message.content || "(assistant message is empty)");
+              } else if (fallbackMessage !== null) {
+                console.log(fallbackMessage || "(assistant message is empty)");
               } else {
                 console.log(
                   "(agent completed, no assistant message)",
@@ -124,6 +161,15 @@ const program = Effect.gen(function* () {
               }
               Deno.exit(0);
             }
+          }
+
+          // Connection closed — use fallback if subscribe was ok.
+          if (subscribeOk && fallbackMessage !== null) {
+            console.error(
+              "Warning: connection closed before agent_end (agent may have already finished). Using cached get_message as fallback.",
+            );
+            console.log(fallbackMessage || "(assistant message is empty)");
+            Deno.exit(0);
           }
 
           throw new SocketError({
