@@ -180,7 +180,9 @@ const program = Effect.gen(function* () {
                 // (the control extension sends { message: ExtractedMessage })
                 const message = msg.data?.message;
                 if (message && typeof message.content === "string") {
-                  console.log(message.content || "(assistant message is empty)");
+                  console.log(
+                    message.content || "(assistant message is empty)",
+                  );
                 } else {
                   console.log(
                     "(agent completed, no assistant message)",
@@ -192,16 +194,13 @@ const program = Effect.gen(function* () {
           }
 
           throw new SocketError({
-            message:
-              "Connection closed before receiving agent_end event.",
+            message: "Connection closed before receiving agent_end event.",
           });
         },
         catch: (e) =>
-          e instanceof SocketError
-            ? e
-            : new SocketError({
-              message: `wait for agent_end: ${String(e)}`,
-            }),
+          e instanceof SocketError ? e : new SocketError({
+            message: `wait for agent_end: ${String(e)}`,
+          }),
       });
     }));
 });

@@ -136,7 +136,9 @@ const program = Effect.gen(function* () {
               msg.type === "response" &&
               msg.command === "get_message"
             ) {
-              const data = msg.data as { message?: { content?: string } } | undefined;
+              const data = msg.data as
+                | { message?: { content?: string } }
+                | undefined;
               if (data?.message && typeof data.message.content === "string") {
                 fallbackMessage = data.message.content;
               }

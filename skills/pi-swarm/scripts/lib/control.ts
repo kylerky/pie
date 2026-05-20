@@ -142,7 +142,11 @@ export const getSessionIdFromPane = (
   sessionName: string,
   windowName: string,
   timeoutMs = 30_000,
-): Effect.Effect<string, SocketError | ShellError, CommandExecutor.CommandExecutor> =>
+): Effect.Effect<
+  string,
+  SocketError | ShellError,
+  CommandExecutor.CommandExecutor
+> =>
   Effect.gen(function* () {
     const deadline = Date.now() + timeoutMs;
     const uuidRe =
