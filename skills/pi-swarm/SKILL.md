@@ -30,6 +30,8 @@ spawn.ts --session explore rust-crates "Explore the Rust crates..."
 spawn.ts --session explore racket-source "Explore the Racket source..."
 ```
 
+Wait for the subagents to finish using `wait.ts`, which produces the results.
+
 **2. Swarm Coordination (Peer-to-Peer):** Spawn cooperating agents within one
 session. Agents communicate directly through control channels. Parent bootstraps
 by passing session IDs.
@@ -184,4 +186,4 @@ deno run --allow-all kill.ts --session explore implementer
 7. **Clean up** — kill members when done; never exceed 5 concurrent.
 8. **Verify liveness** with `list.ts` before sending. On failure, check pane
    output with `tmux capture-pane -t pi-swarm-<session>:<window>`.
-9. **Close the swarm loop** — have members report results before being killed.
+9. **Close the swarm loop**
