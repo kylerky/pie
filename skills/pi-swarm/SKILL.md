@@ -5,12 +5,11 @@ description: Delegate tasks to subagent Pi instances or orchestrate swarms of co
 
 # Pi Swarm
 
-Spawn and manage swarms of Pi instances — isolated subagents and cooperating
-multi-agent swarms. Each swarm lives in its own tmux session; within a session,
-each agent is a separate window. Agents communicate with the parent and each
-other via Unix domain socket control channels.
-
-## Architecture
+Spawn and manage Pi instances as tmux windows grouped in sessions. Each agent
+runs `pi --session-control`, creates a socket at
+`~/.pi/session-control/<session-id>.sock`, and has its own isolated context.
+The initial prompt is sent via the control socket after startup (not as a CLI
+argument).
 
 ```
 tmux session "pi-swarm-explore"        tmux session "pi-swarm-build"
@@ -20,308 +19,153 @@ tmux session "pi-swarm-explore"        tmux session "pi-swarm-build"
 └─ window: tools-scripts (agent)
 ```
 
-Each agent:
-
-- Runs `pi --session-control` (no initial prompt on CLI — prompt is sent via
-  control socket after startup)
-- Creates a control socket at `~/.pi/session-control/<session-id>.sock`
-- Has its own isolated context window
-
-Different swarms (different tasks/stages) go in different sessions. Within a
-session, agents are windows — attach once and use `C-b n` / `C-b p` to switch
-between them.
-
 ## Two Usage Patterns
 
-### 1. Subagent Delegation (Parent → Workers)
-
-Spawn one or more subagents to handle independent tasks. The parent delegates
-work and collects results. Subagents don't need to talk to each other — the
-parent coordinates everything.
-
-All subagents for one task share a tmux session:
+**1. Subagent Delegation (Parent → Workers):** Spawn subagents for independent
+tasks. The parent coordinates everything. All subagents for one task share a
+tmux session:
 
 ```bash
 spawn.ts --session explore rust-crates "Explore the Rust crates..."
 spawn.ts --session explore racket-source "Explore the Racket source..."
-spawn.ts --session explore openspec-docs "Explore OpenSpec specs..."
 ```
 
-### 2. Swarm Coordination (Peer-to-Peer)
-
-Spawn multiple Pi instances that form a cooperative swarm within one session.
-Agents communicate directly with each other through control channels. The parent
-bootstraps the swarm by passing session IDs, then agents coordinate
-autonomously.
+**2. Swarm Coordination (Peer-to-Peer):** Spawn cooperating agents within one
+session. Agents communicate directly through control channels. Parent
+bootstraps by passing session IDs.
 
 ## When Pi MUST Use Pi Swarm
 
-Pi MUST delegate work to swarm members (rather than doing it in the main
-session) when:
+Pi MUST delegate to swarm members (not the main session) for: parallelizable
+tasks, large multi-step work, background operations, context isolation,
+division of labor, and swarm coordination.
 
-- **Parallelizable tasks**: Two or more independent tasks that can run at the
-  same time (e.g., researching two different topics, implementing separate
-  modules, linting and testing simultaneously).
-- **Large multi-step tasks**: Complex work that benefits from a focused,
-  isolated context window (e.g., a full feature implementation, a codebase-wide
-  refactor, an investigation that reads many files).
-- **Background work**: Long-running operations that shouldn't block the main
-  session (e.g., running a test suite, building a project, fetching many URLs).
-- **Context isolation**: Tasks that would clutter the main session's context
-  with irrelevant detail (e.g., exploratory spikes, debugging a different
-  component).
-- **Division of labor**: Tasks that cleanly separate into different concerns
-  (e.g., research vs implementation, frontend vs backend, writing tests vs
-  writing code).
-- **Swarm workflows**: Tasks where multiple agents benefit from peer-to-peer
-  coordination (e.g., one agent researches while another implements, then they
-  cross-validate each other's work).
+Do NOT spawn swarm members for: trivial one-shot operations, tightly sequential
+tasks, or simple single-turn questions.
 
-Do NOT spawn swarm members for:
-
-- Trivial one-shot operations (single `ls`, `cat`, `rg`)
-- Tasks that need tight, sequential coordination with the main session
-- Simple questions that can be answered in a single turn
-
-**Default parallelism limit**: 3-5 concurrent swarm members to avoid resource
-exhaustion.
+**Default parallelism limit**: 3-5 concurrent members.
 
 ## Communication Architecture
 
-All communication uses Pi's control extension (in agent-stuff). Swarm members
-are started with `--session-control`, which creates a Unix domain socket at
-`~/.pi/session-control/<session-id>.sock`.
-
-### Initial Prompt
-
-The initial prompt is sent via the control socket after the agent starts — NOT
-as a CLI argument to pi. This ensures reliable delivery regardless of prompt
-length or special characters. `spawn.ts` handles this automatically.
-
-### Parent → Swarm Member
-
-Use the `send_to_session` tool:
+Use `send_to_session` for parent→member communication:
 
 ```
-send_to_session(sessionId: "<session-id>", action: "send", message: "...")
+send_to_session(sessionId: "<id>", action: "send", message: "...")
 ```
 
-Add `wait_until: "turn_end"` to block until the member finishes its current
-turn and receive the response. Use `wait_until: "agent_end"` to block until
-the full agent loop completes (useful for multi-turn tasks). Both modes use the
-subscribe-before-send pattern internally to avoid race conditions.
+Add `wait_until: "turn_end"` for single-response calls, `"agent_end"` for
+multi-turn tasks. Use `action: "get_message"` for the last assistant message,
+`"get_summary"` for an AI summary. Members receive a `<sender_info>` block with
+the parent's session ID and can reply with their own `send_to_session`.
 
-Use `action: "get_message"` to fetch just the last assistant message. Use
-`action: "get_summary"` for an AI-generated summary of activity.
+For peer-to-peer swarms, pass all session IDs in initial prompts so agents
+coordinate autonomously.
 
-### Swarm Member → Parent
+### Timeout Handling (Two-Wait Pattern)
 
-Every message sent via `send_to_session` automatically includes a
-`<sender_info>` block with the sender's session ID and name. The member can
-reply by using its own `send_to_session` tool with the parent's session ID found
-in `<sender_info>`.
+When a `wait_until` or `wait.ts` call times out, **do not immediately steer**:
 
-### Swarm Member ↔ Swarm Member (Peer-to-Peer)
-
-Same mechanism. Pass all relevant session IDs to each swarm member in the
-initial prompt so they can coordinate directly. Example initial prompt for a
-swarm:
-
-> "You are part of a Pi swarm. Your role: research authentication patterns. Your
-> session ID is available in $PI_SESSION_ID. Swarm members: implementer at
-> `<impl-session-id>`, tester at `<test-session-id>`. Use send_to_session to ask
-> them questions and share findings. Coordinate autonomously — the parent does
-> not need to relay messages."
+1. **Verify liveness** — `list.ts` or check tmux session. If dead, handle normally.
+2. **Second wait** — if the agent is still alive, wait again with a similar
+   timeout. The agent may just need more time.
+3. **Steer only after two timeouts** — use `send_to_session(...,
+   mode: "steer")` with a short wait (e.g., `wait_until: "turn_end"`).
 
 ## Event Synchronization
 
-The control extension emits two events for subscribers:
-
-- **`turn_end`** — fires after each individual turn (one LLM response + tool calls).
-- **`agent_end`** — fires once when the full agent loop completes (all turns). Use for multi-turn tasks.
-
-**Always subscribe before sending** to avoid race conditions:
+Events: **`turn_end`** (after one LLM response + tool calls), **`agent_end`**
+(after all turns). Always subscribe before sending:
 
 ```
 1. write: { type: "subscribe", event: "agent_end" }
-2. write: { type: "send", message: "..." }      // turn starts AFTER subscription is registered
+2. write: { type: "send", message: "..." }
 3. read: wait for agent_end event
 ```
 
-The server processes both commands synchronously before queuing the agent turn,
-so the subscription is guaranteed to exist when the event fires.
-
-`send_to_session` with `wait_until` and `send.ts --wait` both use this pattern
-internally. `wait.ts` subscribes to `agent_end` with a `get_message` fallback
-for the case where the agent already finished before connection (outputs a
-warning when fallback is used).
+`wait.ts` subscribes to `agent_end` with a `get_message` fallback for agents
+that already finished before connection.
 
 ## Scripts
 
-All scripts live in `scripts/` and are written in TypeScript for Deno using the
-[Effect-TS](https://effect.website/) framework for structured error handling,
-resource safety, and composability. Run with
+All in `scripts/`, TypeScript/Deno with Effect-TS. Run with
 `deno run --allow-all scripts/<script>.ts`.
 
-### spawn.ts — Spawn a new swarm member
-
+**spawn.ts** — Spawn a swarm member:
 ```bash
-deno run --allow-all scripts/spawn.ts [--tmux-socket <path>] [--cwd <path>] [--session <name>] <name> "<initial-prompt>"
+deno run --allow-all spawn.ts [--tmux-socket <path>] [--cwd <path>] [--session <name>] <name> "<prompt>"
 ```
+Options: `--tmux-socket` (path to tmux socket), `--cwd` (working dir, default:
+parent CWD), `--session` (group name, pfx `pi-swarm-`, default: `default`).
+Outputs JSON: `{ sessionId, sessionName, tmuxSession, windowName, tmuxSocket,
+controlSocket, cwd }`. Store `sessionId` for later communication. For long
+prompts (>100KB), write to a temp file or use `@file`.
 
-Options:
-
-- `--tmux-socket <path>` — Path to the tmux server socket (default: computed
-  from `$PI_TMUX_SOCKET_DIR` or `$TMPDIR`)
-- `--cwd <path>` — Working directory for the subagent (default: current
-  directory of the parent process)
-- `--session <name>` — Swarm session name. The tmux session is always
-  `pi-swarm-<name>` (default: `default`, producing session `pi-swarm-default`).
-  All agents spawned with the same `--session` share one tmux session.
-
-Creates a window named `<name>` in the tmux session `pi-swarm-<session>`
-(default: `pi-swarm-default`), starts `pi --session-control`, waits for the
-control socket, then sends the initial prompt via the control socket. Outputs
-JSON:
-
-```json
-{
-  "sessionId": "abc123...",
-  "sessionName": "researcher",
-  "tmuxSession": "pi-swarm-explore",
-  "windowName": "researcher",
-  "tmuxSocket": "/tmp/pi-tmux-sockets/pi-swarm.sock",
-  "controlSocket": "/home/user/.pi/session-control/abc123.sock",
-  "cwd": "/home/user/project"
-}
-```
-
-Store the `sessionId` — you'll need it for `send_to_session` calls.
-
-**Working directory**: The `--cwd` flag sets the working directory for the tmux
-window (via `tmux -c`). This is essential when the parent Pi is running inside a
-git worktree or a specific project directory — the spawned subagent must start
-in the same directory to access the project files. Default: inherits the
-parent's CWD.
-
-For very long prompts (>100KB), write the prompt to a temp file and pipe it, or
-use `@file` syntax with pi.
-
-### list.ts — List running swarm members
-
+**list.ts** — List running members:
 ```bash
-deno run --allow-all scripts/list.ts [--json] [--session <name>]
+deno run --allow-all list.ts [--json] [--session <name>]
 ```
 
-Shows all pi-swarm sessions and their agent windows grouped by session, with
-attached control sockets. Pass `--json` for machine-readable output. Pass
-`--session <name>` to show only one session.
-
-### send.ts — Send a raw message to a control socket (for scripts/debugging)
-
+**send.ts** — Send a message (for scripts/debugging):
 ```bash
-deno run --allow-all scripts/send.ts <session-id> <message> [--mode steer|follow_up] [--wait]
+deno run --allow-all send.ts <session-id> <message> [--mode steer|follow_up] [--wait]
 ```
+`--wait` blocks until `agent_end` using subscribe-before-send.
 
-Sends a message directly to a control socket. Use `--wait` to block until
-`agent_end` using the subscribe-before-send pattern (see Event Synchronization).
-The connection is managed via `acquireRelease` for guaranteed cleanup.
-
-### kill.ts — Terminate a swarm member
-
+**kill.ts** — Terminate a member:
 ```bash
-deno run --allow-all scripts/kill.ts [--session <name>] <agent-name>
+deno run --allow-all kill.ts [--session <name>] <agent-name>
 ```
+Kills the window. Last window kills the session. Sweeps orphaned symlinks.
 
-Kills the agent window. Accepts the window name (e.g., `researcher`) and
-optionally the session with `--session`. If it was the last window in the
-session, the session is also killed. Also sweeps orphaned symlinks in
-`~/.pi/session-control/`.
-
-### wait.ts — Wait for a swarm member to finish
-
+**wait.ts** — Wait for completion:
 ```bash
-deno run --allow-all scripts/wait.ts <session-id> [--timeout <seconds>]
+deno run --allow-all wait.ts <session-id> [--timeout <seconds>]
 ```
-
-Blocks until the agent completes all turns. Subscribes to `agent_end` with a
-`get_message` fallback: if the agent already finished before connection, the
-cached message is used (with a warning to stderr). Times out after the given
-seconds (default 300). Call immediately after `spawn.ts` to minimize the race
-window.
+Blocks until all turns complete (default timeout: 300s).
 
 ## Swarm Workflow Example
 
 ```bash
-# ── Spawn agents in parallel ──────────────────────────────────────
-
-deno run --allow-all scripts/spawn.ts --cwd /home/user/project --session explore researcher \
+# Spawn agents
+deno run --allow-all spawn.ts --cwd /home/user/project --session explore researcher \
   "You are in a Pi swarm. Research best practices for Rust error handling."
-# → {"sessionId":"abc-123","tmuxSession":"pi-swarm-explore","windowName":"researcher",...}
+# → {"sessionId":"abc-123", ...}
 
-deno run --allow-all scripts/spawn.ts --cwd /home/user/project --session explore implementer \
+deno run --allow-all spawn.ts --cwd /home/user/project --session explore implementer \
   "You are in a Pi swarm. Implement error types in src/errors.rs. Coordinate with researcher at abc-123."
-# → {"sessionId":"def-456","tmuxSession":"pi-swarm-explore","windowName":"implementer",...}
+# → {"sessionId":"def-456", ...}
 
-# ── Wait for results (subscribe-before-send atomic pattern) ───────
-# wait.ts subscribes to agent_end FIRST, then the agent turn proceeds.
-# If the agent already finished, the get_message fallback is used with a warning.
+# Wait for results
+deno run --allow-all wait.ts abc-123
+deno run --allow-all wait.ts def-456
 
-deno run --allow-all scripts/wait.ts abc-123
-# → (researcher's final output)
+# On timeout: verify liveness, wait again, steer only as last resort
+deno run --allow-all wait.ts def-456 --timeout 120  # times out
+deno run --allow-all list.ts --session explore       # still alive → wait again
+deno run --allow-all wait.ts def-456 --timeout 180  # second wait
+# Only after second timeout, steer:
+# deno run --allow-all send.ts def-456 "Any blockers?" --mode steer --wait
 
-deno run --allow-all scripts/wait.ts def-456
-# → (implementer's final output)
+# Follow-up
+deno run --allow-all send.ts abc-123 "Check async error handling too" --wait
 
-# ── Follow-up with send_to_session ────────────────────────────────
-# The send_to_session tool uses the same atomic subscribe-before-send pattern
-# via sendRpcCommand(waitForEvent) — no race between send and subscribe.
-#
-# Pi should use: send_to_session(
-#   sessionId: "abc-123",
-#   action: "send",
-#   message: "Can you also check async error handling?",
-#   wait_until: "agent_end"
-# )
-
-# Or via the CLI script (also subscribe-before-send internally):
-deno run --allow-all scripts/send.ts abc-123 "Check async error handling too" --wait
-# → (researcher's response)
-
-# ── Clean up ──────────────────────────────────────────────────────
-
-deno run --allow-all scripts/kill.ts --session explore researcher
-deno run --allow-all scripts/kill.ts --session explore implementer
-# (session pi-swarm-explore is automatically killed when last window dies)
+# Clean up
+deno run --allow-all kill.ts --session explore researcher
+deno run --allow-all kill.ts --session explore implementer
 ```
 
 ## Best Practices
 
-1. **Always record session IDs** returned by `spawn.ts`. You need them for all
-   subsequent communication.
-2. **Use the `--session` flag** to group related agents. All agents for one task
-   should share a session for easy monitoring.
-3. **Pass `--cwd` when spawning in worktrees or specific project directories**.
-   The subagent's working directory determines which files it can access.
-   Default: inherits the parent's CWD.
-4. **Provide clear, self-contained prompts**. Swarm members have their own
-   context — tell them everything they need.
-5. **For swarms, include full coordination instructions** in prompts. Pass all
-   other members' session IDs and describe the communication topology.
-6. **Choose the right pattern**: use simple delegation when the parent should
-   coordinate; use swarm mode when agents should communicate peer-to-peer.
-7. **Wait appropriately**:
-   - Use `wait_until: "agent_end"` on `send_to_session` for multi-turn tasks,
-     `"turn_end"` for single-response calls. Both use atomic subscribe-before-send.
-   - `wait.ts <id>` blocks until the agent finishes (call right after `spawn.ts`).
-   - Use `send_to_session` with `mode: "follow_up"` for fire-and-forget background messages.
-8. **Clean up**. Always kill swarm members when their work is done.
-9. **Limit parallelism**. Never spawn more than 5 members concurrently unless
-   the user explicitly asks for massive parallelism.
-10. **Verify liveness** before sending. Tmux sessions can die; use `list.ts` to
-    confirm a member is still running.
-11. **Handle failures gracefully**. If a member doesn't respond or its socket is
-    gone, check the tmux pane output with
-    `tmux capture-pane -t pi-swarm-<session>:<window>` and restart if needed.
-12. **Close the swarm loop**: when a swarm's work is complete, have members
-    report back to the parent with final results before being killed.
+1. **Record session IDs** from `spawn.ts` for all subsequent communication.
+2. **Use `--session`** to group related agents; `--cwd` for worktrees/specific dirs.
+3. **Provide self-contained prompts** — swarm members have isolated context.
+4. **For swarms, include coordination instructions** — pass all member session IDs.
+5. **Choose the right pattern** — delegation when parent coordinates, swarm
+   when agents communicate peer-to-peer.
+6. **Wait appropriately** — `wait_until: "agent_end"` for multi-turn,
+   `"turn_end"` for single-response, `follow_up` for fire-and-forget.
+   **On timeout, wait a second time** before steering. See "Timeout Handling."
+7. **Clean up** — kill members when done; never exceed 5 concurrent.
+8. **Verify liveness** with `list.ts` before sending. On failure, check pane
+   output with `tmux capture-pane -t pi-swarm-<session>:<window>`.
+9. **Close the swarm loop** — have members report results before being killed.
