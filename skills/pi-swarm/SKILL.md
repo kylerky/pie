@@ -28,6 +28,10 @@ tmux session:
 ```bash
 spawn.ts --session explore rust-crates "Explore the Rust crates..."
 spawn.ts --session explore racket-source "Explore the Racket source..."
+
+# With restrictions
+spawn.ts --session explore --tools read,grep,find,ls --no-skills \
+  rust-crates "Explore the Rust crates..."
 ```
 
 Wait for the subagents to finish using `wait.ts`, which produces the results.
@@ -46,6 +50,82 @@ Do NOT spawn swarm members for: trivial one-shot operations, tightly sequential
 tasks, or simple single-turn questions.
 
 **Default parallelism limit**: 3-5 concurrent members.
+
+## Spawning with Tool and Extension Restrictions
+
+Spawned instances can be restricted to limit their capabilities — useful for
+read-only exploration agents, sandboxed workers, or context isolation. Pass
+restriction flags to `spawn.ts`; they are forwarded directly to the `pi`
+process:
+
+```bash
+# Read-only agent — only inspect files, no modifications
+deno run --allow-all spawn.ts --tools read,grep,find,ls explorer \
+  "Explore the codebase structure"
+
+# No tools at all — reasoning only
+deno run --allow-all spawn.ts --no-tools thinker \
+  "Think through this design problem"
+
+# No extensions or skills — minimal context, faster startup
+deno run --allow-all spawn.ts --no-extensions --no-skills minimal \
+  "Quick question about this code"
+
+# Specific tools + specific skills only
+deno run --allow-all spawn.ts \
+  --tools read,bash,edit,write \
+  --skill ./path/to/skill.md \
+  --no-extensions \
+  focused \
+  "Implement the feature described in the skill"
+
+# Full isolation — no tools, no extensions, no skills, no context files
+deno run --allow-all spawn.ts \
+  --no-tools --no-extensions --no-skills --no-context-files \
+  isolated \
+  "Analyze this problem with no external context"
+```
+
+### Restriction Flags
+
+| Flag | Short | Effect on spawned Pi |
+|------|-------|---------------------|
+| `--no-tools` | `-nt` | Disable all tools (built-in + extension) |
+| `--no-builtin-tools` | `-nbt` | Disable built-in tools; extension tools remain |
+| `--tools <list>` | `-t` | Comma-separated allowlist of tool names |
+| `--no-extensions` | `-ne` | Disable extension auto-discovery |
+| `--extension <path>` | `-e` | Load specific extension (repeatable) |
+| `--no-skills` | `-ns` | Disable skill discovery |
+| `--skill <path>` | | Load specific skill (repeatable) |
+| `--no-context-files` | `-nc` | Disable AGENTS.md / CLAUDE.md discovery |
+
+When restrictions are active, the spawn output JSON includes a `restrictions`
+summary:
+
+```json
+{
+  "sessionId": "abc-123",
+  "sessionName": "explorer",
+  "tmuxSession": "pi-swarm-explore",
+  "restrictions": {
+    "tools": ["read", "grep", "find", "ls"],
+    "skills": "none"
+  }
+}
+
+// With --no-builtin-tools --tools read,edit:
+{
+  "restrictions": {
+    "builtinTools": false,
+    "tools": ["read", "edit"]
+  }
+}
+```
+
+> **Note:** `--no-extensions` disables extension auto-discovery but not
+> explicitly loaded extensions (via `--extension`). The `--no-extensions` should
+> not affect `--session-control`, but if you encounter connectivity issues, omit
+> `--no-extensions` and use `--no-skills` and `--no-context-files` instead.
 
 ## Communication Architecture
 
@@ -98,14 +178,21 @@ All in `scripts/`, TypeScript/Deno with Effect-TS. Run with
 **spawn.ts** — Spawn a swarm member:
 
 ```bash
-deno run --allow-all spawn.ts [--tmux-socket <path>] [--cwd <path>] [--session <name>] <name> "<prompt>"
+deno run --allow-all spawn.ts [options] <name> "<prompt>"
 ```
 
-Options: `--tmux-socket` (path to tmux socket), `--cwd` (working dir, default:
-parent CWD), `--session` (group name, pfx `pi-swarm-`, default: `default`).
+Options:
+- `--tmux-socket <path>` — path to tmux socket
+- `--cwd <path>` — working dir (default: parent CWD)
+- `--session <name>` — group name, pfx `pi-swarm-` (default: random UUID)
+- **Tool restrictions:** `--no-tools` (`-nt`), `--no-builtin-tools` (`-nbt`), `--tools <list>` (`-t`)
+- **Extension restrictions:** `--no-extensions` (`-ne`), `--extension <path>` (`-e`, repeatable)
+- **Skill restrictions:** `--no-skills` (`-ns`), `--skill <path>` (repeatable)
+- **Context file restrictions:** `--no-context-files` (`-nc`)
+
 Outputs JSON:
 `{ sessionId, sessionName, tmuxSession, windowName, tmuxSocket,
-controlSocket, cwd }`.
+controlSocket, cwd, restrictions? }`.
 Store `sessionId` for later communication. For long prompts (>100KB), write to a
 temp file or use `@file`.
 
@@ -144,10 +231,12 @@ in the foreground.
 
 ```bash
 # Spawn agents
-deno run --allow-all spawn.ts --cwd /home/user/project --session explore researcher \
+# Read-only agent
+deno run --allow-all spawn.ts --tools read,grep,find,ls researcher \
   "You are in a Pi swarm. Research best practices for Rust error handling."
-# → {"sessionId":"abc-123", ...}
+# → {"sessionId":"abc-123","restrictions":{"tools":["read","grep","find","ls"]}, ...}
 
+# Full-capability agent
 deno run --allow-all spawn.ts --cwd /home/user/project --session explore implementer \
   "You are in a Pi swarm. Implement error types in src/errors.rs. Coordinate with researcher at abc-123."
 # → {"sessionId":"def-456", ...}

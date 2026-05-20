@@ -3,12 +3,20 @@
  * spawn.ts — Spawn a Pi subagent as a window in a swarm tmux session.
  *
  * Usage:
- *   deno run --allow-all spawn.ts [--tmux-socket <path>] [--cwd <path>] [--session <name>] <name> <initial-prompt>
+ *   deno run --allow-all spawn.ts [--tmux-socket <path>] [--cwd <path>] [--session <name>]
+ *     [--no-tools | -nt] [--no-builtin-tools | -nbt] [--tools | -t <tools>]
+ *     [--no-extensions | -ne] [--extension | -e <path>]...
+ *     [--no-skills | -ns] [--skill <path>]...
+ *     [--no-context-files | -nc]
+ *     <name> <initial-prompt>
  *
  * The agent is started as a window in the given session. If no session is
  * specified, a random session name is generated for isolation.
  * The initial prompt is sent via the session-control socket after the agent
  * starts, rather than as a CLI argument to pi.
+ *
+ * Tool/extension restriction flags are forwarded to the spawned Pi process.
+ * Use these to create read-only agents, limit capabilities, or isolate context.
  */
 
 import { join } from "jsr:@std/path";
@@ -33,6 +41,18 @@ interface ParsedArgs {
   session: string;
   name: string;
   prompt: string;
+  /** Tool restriction flags */
+  noTools: boolean;
+  noBuiltinTools: boolean;
+  toolsAllowlist: string | null;
+  /** Extension restriction flags */
+  noExtensions: boolean;
+  extensionPaths: string[];
+  /** Skill restriction flags */
+  noSkills: boolean;
+  skillPaths: string[];
+  /** Context file restriction flags */
+  noContextFiles: boolean;
 }
 
 function parseArgs(raw: string[]): Effect.Effect<ParsedArgs> {
@@ -42,27 +62,88 @@ function parseArgs(raw: string[]): Effect.Effect<ParsedArgs> {
     let cwd: string | null = null;
     let session = "";
 
-    const sockIdx = args.indexOf("--tmux-socket");
-    if (sockIdx !== -1 && sockIdx + 1 < args.length) {
-      tmuxSocket = args[sockIdx + 1];
-      args.splice(sockIdx, 2);
+    // Restriction flags (default: no restrictions)
+    let noTools = false;
+    let noBuiltinTools = false;
+    let toolsAllowlist: string | null = null;
+    let noExtensions = false;
+    const extensionPaths: string[] = [];
+    let noSkills = false;
+    const skillPaths: string[] = [];
+    let noContextFiles = false;
+
+    const remaining: string[] = [];
+    for (let i = 0; i < args.length; i++) {
+      const arg = args[i];
+      switch (arg) {
+        // ── session / cwd ──
+        case "--tmux-socket":
+          if (i + 1 < args.length) tmuxSocket = args[++i];
+          break;
+        case "--cwd":
+          if (i + 1 < args.length) cwd = args[++i];
+          break;
+        case "--session":
+          if (i + 1 < args.length) session = args[++i];
+          break;
+        // ── tools ──
+        case "--no-tools":
+        case "-nt":
+          noTools = true;
+          break;
+        case "--no-builtin-tools":
+        case "-nbt":
+          noBuiltinTools = true;
+          break;
+        case "--tools":
+        case "-t":
+          if (i + 1 < args.length) toolsAllowlist = args[++i];
+          break;
+        // ── extensions ──
+        case "--no-extensions":
+        case "-ne":
+          noExtensions = true;
+          break;
+        case "--extension":
+        case "-e":
+          if (i + 1 < args.length) extensionPaths.push(args[++i]);
+          break;
+        // ── skills ──
+        case "--no-skills":
+        case "-ns":
+          noSkills = true;
+          break;
+        case "--skill":
+          if (i + 1 < args.length) skillPaths.push(args[++i]);
+          break;
+        // ── context files ──
+        case "--no-context-files":
+        case "-nc":
+          noContextFiles = true;
+          break;
+        // ── positional ──
+        default:
+          remaining.push(arg);
+      }
     }
 
-    const cwdIdx = args.indexOf("--cwd");
-    if (cwdIdx !== -1 && cwdIdx + 1 < args.length) {
-      cwd = args[cwdIdx + 1];
-      args.splice(cwdIdx, 2);
-    }
-
-    const sessionIdx = args.indexOf("--session");
-    if (sessionIdx !== -1 && sessionIdx + 1 < args.length) {
-      session = args[sessionIdx + 1];
-      args.splice(sessionIdx, 2);
-    }
-
-    const name = args[0] ?? "";
-    const prompt = args.slice(1).join(" ");
-    return { tmuxSocket, cwd, session, name, prompt };
+    const name = remaining[0] ?? "";
+    const prompt = remaining.slice(1).join(" ");
+    return {
+      tmuxSocket,
+      cwd,
+      session,
+      name,
+      prompt,
+      noTools,
+      noBuiltinTools,
+      toolsAllowlist,
+      noExtensions,
+      extensionPaths,
+      noSkills,
+      skillPaths,
+      noContextFiles,
+    };
   });
 }
 
@@ -73,7 +154,22 @@ const program = Effect.gen(function* () {
 
   if (!parsed.name || !parsed.prompt.trim()) {
     yield* Console.error(
-      "Usage: spawn.ts [--tmux-socket <path>] [--cwd <path>] [--session <name>] <name> <initial-prompt>",
+      "Usage: spawn.ts [--tmux-socket <path>] [--cwd <path>] [--session <name>]",
+    );
+    yield* Console.error(
+      "  [--no-tools | -nt] [--no-builtin-tools | -nbt] [--tools | -t <tools>]",
+    );
+    yield* Console.error(
+      "  [--no-extensions | -ne] [--extension | -e <path>]...",
+    );
+    yield* Console.error(
+      "  [--no-skills | -ns] [--skill <path>]...",
+    );
+    yield* Console.error(
+      "  [--no-context-files | -nc]",
+    );
+    yield* Console.error(
+      "  <name> <initial-prompt>",
     );
     return yield* Effect.fail(
       new ShellError({
@@ -95,15 +191,18 @@ const program = Effect.gen(function* () {
   yield* ensureDir(paths.tmuxSocketDir);
   yield* ensureDir(paths.controlDir);
 
+  // Build pi shell args with restriction flags forwarded from spawn.ts
+  const piArgs = buildPiArgs(parsed);
+
   // Start the agent as a window in the swarm session.
-  // pi is started with --session-control only — no prompt arg.
+  // pi is started with --session-control plus any restriction flags.
   yield* createWindow({
     tmuxSocket,
     sessionName,
     windowName,
     cwd,
     shellCommand: "pi",
-    shellArgs: ["--session-control"],
+    shellArgs: piArgs,
   });
 
   // Get the session ID directly from the spawned pi process.
@@ -146,6 +245,7 @@ const program = Effect.gen(function* () {
       ),
     );
 
+  const restrictions = summarizeRestrictions(parsed);
   const result = {
     sessionId,
     sessionName: parsed.name,
@@ -154,6 +254,7 @@ const program = Effect.gen(function* () {
     tmuxSocket,
     controlSocket: join(paths.controlDir, `${sessionId}.sock`),
     cwd,
+    ...(restrictions ? { restrictions } : {}),
   };
 
   yield* Console.log(JSON.stringify(result));
@@ -164,6 +265,57 @@ const program = Effect.gen(function* () {
     `Or attach directly to this agent:\n  tmux -S ${tmuxSocket} attach -t ${sessionName}:${windowName}\n`,
   );
 });
+
+// ── Pi args builder ─────────────────────────────────────────────────────────
+
+/** Build the pi shell arguments from parsed spawn flags. */
+function buildPiArgs(parsed: ParsedArgs): string[] {
+  const args: string[] = ["--session-control"];
+
+  if (parsed.noTools) args.push("--no-tools");
+  if (parsed.noBuiltinTools) args.push("--no-builtin-tools");
+  if (parsed.toolsAllowlist) args.push("--tools", parsed.toolsAllowlist);
+
+  if (parsed.noExtensions) args.push("--no-extensions");
+  for (const ext of parsed.extensionPaths) args.push("--extension", ext);
+
+  if (parsed.noSkills) args.push("--no-skills");
+  for (const skill of parsed.skillPaths) args.push("--skill", skill);
+
+  if (parsed.noContextFiles) args.push("--no-context-files");
+
+  return args;
+}
+
+/** Build a human-readable summary of active restrictions. */
+function summarizeRestrictions(parsed: ParsedArgs): Record<string, unknown> | null {
+  const r: Record<string, unknown> = {};
+
+  if (parsed.noTools) {
+    r.tools = "none";
+  } else {
+    if (parsed.noBuiltinTools) r.builtinTools = false;
+    if (parsed.toolsAllowlist) {
+      r.tools = parsed.toolsAllowlist.split(",").map((s) => s.trim());
+    }
+  }
+
+  if (parsed.noExtensions) {
+    r.extensions = "none";
+  } else if (parsed.extensionPaths.length > 0) {
+    r.extensions = parsed.extensionPaths;
+  }
+
+  if (parsed.noSkills) {
+    r.skills = "none";
+  } else if (parsed.skillPaths.length > 0) {
+    r.skills = parsed.skillPaths;
+  }
+
+  if (parsed.noContextFiles) r.contextFiles = "none";
+
+  return Object.keys(r).length > 0 ? r : null;
+}
 
 // ── Entry point ──────────────────────────────────────────────────────────────
 Effect.runPromise(program.pipe(Effect.provide(platformLayer))).catch(
