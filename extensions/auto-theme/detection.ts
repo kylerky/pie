@@ -61,7 +61,8 @@ export function disableMode2031(): void {
  * Process incoming terminal data for color scheme responses.
  *
  * Returns:
- *   - `"dark" | "light"` — mode 2031 push (caller should switch theme)
+ *   - `"dark" | "light"` — mode 2031 push or spontaneous OSC 11
+ *     broadcast (caller should switch theme)
  *   - `undefined` — consumed internally (query response) or not a match
  */
 export function handleTerminalInput(
@@ -86,20 +87,20 @@ export function handleTerminalInput(
 
   // OSC 11: \x1b]11;rgb:rrrr/gggg/bbbb\x1b\\
   if (data.startsWith("\x1b]11;")) {
+    const rgb = parseOsc11Response(data);
+    const scheme = rgb
+      ? classifyLuminance(relativeLuminance(rgb.r, rgb.g, rgb.b))
+      : null;
+
     if (pendingOsc11Resolve) {
       const resolve = pendingOsc11Resolve;
       clearPendingOsc11();
-      const rgb = parseOsc11Response(data);
-      if (rgb) {
-        const lum = relativeLuminance(rgb.r, rgb.g, rgb.b);
-        resolve(classifyLuminance(lum));
-      } else {
-        resolve(null);
-      }
+      resolve(scheme);
+      return undefined; // Query response — resolved internally
     }
-    // OSC 11 is always consumed when a query is or was pending.
-    // Pass-through for unexpected OSC 11 noise.
-    return undefined;
+
+    // Spontaneous OSC 11 broadcast — treat as push event
+    return scheme ?? undefined;
   }
 
   return undefined;

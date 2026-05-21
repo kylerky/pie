@@ -69,6 +69,7 @@ function registerStdinHandler(ctx: ExtensionContext): void {
     }
 
     if (data.startsWith("\x1b]11;")) {
+      if (pushEvent !== undefined) handlePush(pushEvent, ctx);
       return { consume: true };
     }
 
