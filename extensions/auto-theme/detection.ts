@@ -9,6 +9,10 @@
  *
  * Uses shared internal state for Promise-based response waiting.
  * The stdin handler in index.ts delegates to handleTerminalInput().
+ *
+ * Also provides periodic OSC 11 polling with exponential backoff
+ * for terminals that support OSC 11 queries but not mode 2031 push
+ * notifications.
  */
 
 import {
@@ -18,13 +22,34 @@ import {
 } from "./luminance";
 import type { AutoThemeConfig } from "./config";
 
+// ─── Types ───────────────────────────────────────────────────────────────
+
+export type DetectionMethod =
+  | "mode2031"
+  | "osc11"
+  | "colorfgbg"
+  | "default";
+
+export type DetectionResult = {
+  scheme: "dark" | "light";
+  method: DetectionMethod;
+};
+
 // ─── Internal state for response waiting ──────────────────────────────────
+
+const POLLING_BACKOFF_CAP_MS = 300_000; // 5 minutes
 
 let pending2031Resolve: ((v: "dark" | "light" | null) => void) | null = null;
 let pending2031Timer: ReturnType<typeof setTimeout> | null = null;
 
 let pendingOsc11Resolve: ((v: "dark" | "light" | null) => void) | null = null;
 let pendingOsc11Timer: ReturnType<typeof setTimeout> | null = null;
+
+// Polling state (used by startOsc11Polling)
+let pollingTimer: ReturnType<typeof setTimeout> | null = null;
+let consecutiveTimeouts = 0;
+
+// ─── Internal helpers ────────────────────────────────────────────────────
 
 function clearPending2031(): void {
   if (pending2031Timer) clearTimeout(pending2031Timer);
@@ -164,21 +189,91 @@ export function detectColorFgBg(): "dark" | "light" | null {
 
 // ─── Orchestration ────────────────────────────────────────────────────────
 
-export async function detectColorScheme(): Promise<"dark" | "light"> {
+export async function detectColorScheme(): Promise<DetectionResult> {
   // 1. DEC mode 2031
   const mode2031 = await queryMode2031(200);
-  if (mode2031) return mode2031;
+  if (mode2031) return { scheme: mode2031, method: "mode2031" };
 
   // 2. OSC 11
   const osc11 = await queryOsc11(200);
-  if (osc11) return osc11;
+  if (osc11) return { scheme: osc11, method: "osc11" };
 
   // 3. COLORFGBG
   const fgbg = detectColorFgBg();
-  if (fgbg) return fgbg;
+  if (fgbg) return { scheme: fgbg, method: "colorfgbg" };
 
   // 4. Default
-  return "dark";
+  return { scheme: "dark", method: "default" };
+}
+
+// ─── OSC 11 periodic polling ─────────────────────────────────────────────
+
+/**
+ * Start periodic OSC 11 polling to detect runtime color scheme changes.
+ *
+ * Uses `setTimeout` chaining with exponential backoff on repeated timeouts.
+ * The returned cleanup function stops polling and cancels any pending timer.
+ *
+ * @param intervalMs  Base polling interval in milliseconds.
+ * @param getCurrentScheme  Callback returning the current scheme for dedup.
+ * @param onSchemeChange  Called when a poll detects a scheme change.
+ * @returns  Cleanup function that permanently stops polling.
+ */
+export function startOsc11Polling(
+  intervalMs: number,
+  getCurrentScheme: () => "dark" | "light" | null,
+  onSchemeChange: (scheme: "dark" | "light") => void,
+): () => void {
+  consecutiveTimeouts = 0;
+  let stopped = false;
+
+  function scheduleNext(delayMs: number): void {
+    if (stopped) return;
+
+    pollingTimer = setTimeout(async () => {
+      if (stopped) return;
+
+      // Overlapping poll prevention: skip if a query is already in flight
+      if (pendingOsc11Resolve !== null) {
+        scheduleNext(delayMs);
+        return;
+      }
+
+      const result = await queryOsc11(200);
+
+      if (stopped) return;
+
+      if (result === null) {
+        // Timeout — apply exponential backoff
+        consecutiveTimeouts++;
+        const backoffMs = Math.min(
+          intervalMs * Math.pow(2, consecutiveTimeouts),
+          POLLING_BACKOFF_CAP_MS,
+        );
+        scheduleNext(backoffMs);
+      } else {
+        // Success — reset backoff to configured interval
+        consecutiveTimeouts = 0;
+
+        // Deduplicate against current scheme
+        if (result !== getCurrentScheme()) {
+          onSchemeChange(result);
+        }
+
+        scheduleNext(intervalMs);
+      }
+    }, delayMs);
+  }
+
+  scheduleNext(intervalMs);
+
+  return () => {
+    stopped = true;
+    if (pollingTimer) {
+      clearTimeout(pollingTimer);
+      pollingTimer = null;
+    }
+  };
 }
 
 export function resolveTheme(

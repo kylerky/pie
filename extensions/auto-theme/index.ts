@@ -16,10 +16,12 @@ import type { AutoThemeConfig } from "./config";
 import {
   cancelAllPending,
   detectColorScheme,
+  type DetectionResult,
   disableMode2031,
   enableMode2031,
   handleTerminalInput,
   resolveTheme,
+  startOsc11Polling,
 } from "./detection";
 import { showSettingsMenu } from "./menu";
 
@@ -32,6 +34,7 @@ let config: AutoThemeConfig = {
 };
 let currentScheme: "dark" | "light" | null = null;
 let unsubStdin: (() => void) | null = null;
+let stopPolling: (() => void) | null = null;
 let pushDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 
 // ─── Theme helpers ────────────────────────────────────────────────────────
@@ -79,19 +82,24 @@ function registerStdinHandler(ctx: ExtensionContext): void {
 
 // ─── Detection & switching ────────────────────────────────────────────────
 
-async function detectAndApply(ctx: ExtensionContext): Promise<void> {
-  if (!config.enabled) return;
+async function detectAndApply(
+  ctx: ExtensionContext,
+): Promise<DetectionResult | null> {
+  if (!config.enabled) return null;
 
   try {
-    const scheme = await detectColorScheme();
-    currentScheme = scheme;
-    const theme = resolveTheme(scheme, config);
+    const result = await detectColorScheme();
+    currentScheme = result.scheme;
+    const theme = resolveTheme(result.scheme, config);
 
     if (applyTheme(theme, ctx)) {
-      ctx.ui.notify(`Auto-theme: ${scheme} → ${theme}`, "info");
+      ctx.ui.notify(`Auto-theme: ${result.scheme} → ${theme}`, "info");
     }
+
+    return result;
   } catch (err) {
     console.error("[auto-theme] Detection error:", err);
+    return null;
   }
 }
 
@@ -140,13 +148,34 @@ export default function (pi: ExtensionAPI): void {
     enableMode2031();
     registerStdinHandler(ctx);
 
-    await detectAndApply(ctx);
+    const result = await detectAndApply(ctx);
+
+    // Start polling if OSC 11 was the detection method and polling is enabled
+    if (
+      result &&
+      result.method === "osc11" &&
+      (config.osc11PollIntervalMs ?? 0) > 0
+    ) {
+      if (stopPolling) stopPolling();
+      stopPolling = startOsc11Polling(
+        config.osc11PollIntervalMs!,
+        () => currentScheme,
+        (scheme) => handlePush(scheme, ctx),
+      );
+    }
   });
 
   // ── Lifecycle: session_shutdown ──
 
   pi.on("session_shutdown", (_event) => {
     disableMode2031();
+
+    // Stop polling before cancelling pending queries
+    if (stopPolling) {
+      stopPolling();
+      stopPolling = null;
+    }
+
     cancelAllPending();
 
     if (unsubStdin) {
@@ -176,17 +205,33 @@ export default function (pi: ExtensionAPI): void {
       const detectNow = async (
         cfg: AutoThemeConfig,
       ): Promise<"dark" | "light"> => {
-        const scheme = await detectColorScheme();
-        currentScheme = scheme;
-        const theme = resolveTheme(scheme, cfg);
+        const result = await detectColorScheme();
+        currentScheme = result.scheme;
+        const theme = resolveTheme(result.scheme, cfg);
         applyTheme(theme, ctx);
-        return scheme;
+        return result.scheme;
       };
 
       const onToggle = (enabled: boolean): void => {
         if (enabled) {
           enableMode2031();
           if (!unsubStdin) registerStdinHandler(ctx);
+
+          // Re-detect and conditionally start polling
+          detectColorScheme().then((result) => {
+            currentScheme = result.scheme;
+            if (
+              result.method === "osc11" &&
+              (config.osc11PollIntervalMs ?? 0) > 0
+            ) {
+              if (stopPolling) stopPolling();
+              stopPolling = startOsc11Polling(
+                config.osc11PollIntervalMs!,
+                () => currentScheme,
+                (scheme) => handlePush(scheme, ctx),
+              );
+            }
+          });
         } else {
           disableMode2031();
           if (unsubStdin) {
@@ -194,6 +239,12 @@ export default function (pi: ExtensionAPI): void {
             unsubStdin = null;
           }
           cancelAllPending();
+
+          // Stop polling
+          if (stopPolling) {
+            stopPolling();
+            stopPolling = null;
+          }
         }
       };
 

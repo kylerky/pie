@@ -11,12 +11,15 @@ export interface AutoThemeConfig {
   enabled: boolean;
   darkTheme: string;
   lightTheme: string;
+  /** Polling interval in ms for OSC 11 (0 = disabled). Default 30000. */
+  osc11PollIntervalMs?: number;
 }
 
 const DEFAULT_CONFIG: AutoThemeConfig = {
   enabled: true,
   darkTheme: "dark",
   lightTheme: "light",
+  osc11PollIntervalMs: 30000,
 };
 
 function configPath(cwd: string): string {
@@ -27,6 +30,13 @@ export function readConfig(cwd: string): AutoThemeConfig {
   try {
     const raw = fs.readFileSync(configPath(cwd), "utf-8");
     const parsed = JSON.parse(raw);
+    const osc11PollIntervalMs =
+      typeof parsed.osc11PollIntervalMs === "number" &&
+        Number.isFinite(parsed.osc11PollIntervalMs) &&
+        Number.isInteger(parsed.osc11PollIntervalMs) &&
+        parsed.osc11PollIntervalMs >= 0
+        ? parsed.osc11PollIntervalMs
+        : DEFAULT_CONFIG.osc11PollIntervalMs!;
     return {
       enabled: typeof parsed.enabled === "boolean"
         ? parsed.enabled
@@ -37,6 +47,7 @@ export function readConfig(cwd: string): AutoThemeConfig {
       lightTheme: typeof parsed.lightTheme === "string"
         ? parsed.lightTheme
         : DEFAULT_CONFIG.lightTheme,
+      osc11PollIntervalMs,
     };
   } catch {
     return { ...DEFAULT_CONFIG };
