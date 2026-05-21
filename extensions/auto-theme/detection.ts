@@ -11,7 +11,11 @@
  * The stdin handler in index.ts delegates to handleTerminalInput().
  */
 
-import { parseOsc11Response, relativeLuminance, classifyLuminance } from "./luminance";
+import {
+  classifyLuminance,
+  parseOsc11Response,
+  relativeLuminance,
+} from "./luminance";
 import type { AutoThemeConfig } from "./config";
 
 // ─── Internal state for response waiting ──────────────────────────────────

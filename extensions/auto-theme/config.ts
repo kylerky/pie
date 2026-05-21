@@ -28,9 +28,15 @@ export function readConfig(cwd: string): AutoThemeConfig {
     const raw = fs.readFileSync(configPath(cwd), "utf-8");
     const parsed = JSON.parse(raw);
     return {
-      enabled: typeof parsed.enabled === "boolean" ? parsed.enabled : DEFAULT_CONFIG.enabled,
-      darkTheme: typeof parsed.darkTheme === "string" ? parsed.darkTheme : DEFAULT_CONFIG.darkTheme,
-      lightTheme: typeof parsed.lightTheme === "string" ? parsed.lightTheme : DEFAULT_CONFIG.lightTheme,
+      enabled: typeof parsed.enabled === "boolean"
+        ? parsed.enabled
+        : DEFAULT_CONFIG.enabled,
+      darkTheme: typeof parsed.darkTheme === "string"
+        ? parsed.darkTheme
+        : DEFAULT_CONFIG.darkTheme,
+      lightTheme: typeof parsed.lightTheme === "string"
+        ? parsed.lightTheme
+        : DEFAULT_CONFIG.lightTheme,
     };
   } catch {
     return { ...DEFAULT_CONFIG };

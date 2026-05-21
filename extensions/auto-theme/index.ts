@@ -7,22 +7,29 @@
  * Provides /theme-auto command for interactive settings.
  */
 
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type {
+  ExtensionAPI,
+  ExtensionContext,
+} from "@earendil-works/pi-coding-agent";
 import { readConfig } from "./config";
 import type { AutoThemeConfig } from "./config";
 import {
-  enableMode2031,
-  disableMode2031,
-  handleTerminalInput,
-  detectColorScheme,
-  resolveTheme,
   cancelAllPending,
+  detectColorScheme,
+  disableMode2031,
+  enableMode2031,
+  handleTerminalInput,
+  resolveTheme,
 } from "./detection";
 import { showSettingsMenu } from "./menu";
 
 // ─── Shared module-level state ────────────────────────────────────────────
 
-let config: AutoThemeConfig = { enabled: true, darkTheme: "dark", lightTheme: "light" };
+let config: AutoThemeConfig = {
+  enabled: true,
+  darkTheme: "dark",
+  lightTheme: "light",
+};
 let currentScheme: "dark" | "light" | null = null;
 let unsubStdin: (() => void) | null = null;
 let pushDebounceTimer: ReturnType<typeof setTimeout> | null = null;
@@ -39,7 +46,11 @@ function applyTheme(theme: string, ctx: ExtensionContext): boolean {
     }
   }
   if (!result.success) {
-    console.error(`[auto-theme] Failed to set theme "${theme}": ${result.error ?? "unknown"}`);
+    console.error(
+      `[auto-theme] Failed to set theme "${theme}": ${
+        result.error ?? "unknown"
+      }`,
+    );
     return false;
   }
   return true;
@@ -84,7 +95,10 @@ async function detectAndApply(ctx: ExtensionContext): Promise<void> {
 }
 
 /** Handle a mode 2031 push notification with debounce. */
-function handlePush(darkOrLight: "dark" | "light", ctx: ExtensionContext): void {
+function handlePush(
+  darkOrLight: "dark" | "light",
+  ctx: ExtensionContext,
+): void {
   if (!config.enabled) return;
 
   if (pushDebounceTimer) clearTimeout(pushDebounceTimer);
@@ -158,7 +172,9 @@ export default function (pi: ExtensionAPI): void {
       // Re-read config (may have changed since startup)
       config = readConfig(ctx.cwd);
 
-      const detectNow = async (cfg: AutoThemeConfig): Promise<"dark" | "light"> => {
+      const detectNow = async (
+        cfg: AutoThemeConfig,
+      ): Promise<"dark" | "light"> => {
         const scheme = await detectColorScheme();
         currentScheme = scheme;
         const theme = resolveTheme(scheme, cfg);

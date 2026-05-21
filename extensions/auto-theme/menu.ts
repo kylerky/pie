@@ -26,7 +26,9 @@ function makeMainOptions(
   ];
 }
 
-function parseMainChoice(choice: string): "toggle" | "dark" | "light" | "detect" | null {
+function parseMainChoice(
+  choice: string,
+): "toggle" | "dark" | "light" | "detect" | null {
   if (choice.startsWith("✓") || choice.startsWith("✗")) return "toggle";
   if (choice.startsWith("Auto dark theme:")) return "dark";
   if (choice.startsWith("Auto light theme:")) return "light";
@@ -67,7 +69,9 @@ export async function showSettingsMenu(
           const detected = await detectNow(cfg);
           scheme = detected;
           ctx.ui.notify(
-            `Auto-theme enabled — detected: ${detected} → ${resolveTheme(detected, cfg)}`,
+            `Auto-theme enabled — detected: ${detected} → ${
+              resolveTheme(detected, cfg)
+            }`,
             "info",
           );
         } else {
