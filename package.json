@@ -1,0 +1,14 @@
+{
+  "name": "pie-extensions",
+  "version": "0.1.0",
+  "description": "Pi extension package — auto-theme detection and utilities",
+  "keywords": ["pi-package"],
+  "pi": {
+    "extensions": ["./extensions"],
+    "skills": ["./skills"]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*"
+  }
+}
