@@ -88,16 +88,16 @@ deno run --allow-all spawn.ts \
 
 ### Restriction Flags
 
-| Flag | Short | Effect on spawned Pi |
-|------|-------|---------------------|
-| `--no-tools` | `-nt` | Disable all tools (built-in + extension) |
+| Flag                 | Short  | Effect on spawned Pi                           |
+| -------------------- | ------ | ---------------------------------------------- |
+| `--no-tools`         | `-nt`  | Disable all tools (built-in + extension)       |
 | `--no-builtin-tools` | `-nbt` | Disable built-in tools; extension tools remain |
-| `--tools <list>` | `-t` | Comma-separated allowlist of tool names |
-| `--no-extensions` | `-ne` | Disable extension auto-discovery |
-| `--extension <path>` | `-e` | Load specific extension (repeatable) |
-| `--no-skills` | `-ns` | Disable skill discovery |
-| `--skill <path>` | | Load specific skill (repeatable) |
-| `--no-context-files` | `-nc` | Disable AGENTS.md / CLAUDE.md discovery |
+| `--tools <list>`     | `-t`   | Comma-separated allowlist of tool names        |
+| `--no-extensions`    | `-ne`  | Disable extension auto-discovery               |
+| `--extension <path>` | `-e`   | Load specific extension (repeatable)           |
+| `--no-skills`        | `-ns`  | Disable skill discovery                        |
+| `--skill <path>`     |        | Load specific skill (repeatable)               |
+| `--no-context-files` | `-nc`  | Disable AGENTS.md / CLAUDE.md discovery        |
 
 When restrictions are active, the spawn output JSON includes a `restrictions`
 summary:
@@ -182,11 +182,14 @@ deno run --allow-all spawn.ts [options] <name> "<prompt>"
 ```
 
 Options:
+
 - `--tmux-socket <path>` — path to tmux socket
 - `--cwd <path>` — working dir (default: parent CWD)
 - `--session <name>` — group name, pfx `pi-swarm-` (default: random UUID)
-- **Tool restrictions:** `--no-tools` (`-nt`), `--no-builtin-tools` (`-nbt`), `--tools <list>` (`-t`)
-- **Extension restrictions:** `--no-extensions` (`-ne`), `--extension <path>` (`-e`, repeatable)
+- **Tool restrictions:** `--no-tools` (`-nt`), `--no-builtin-tools` (`-nbt`),
+  `--tools <list>` (`-t`)
+- **Extension restrictions:** `--no-extensions` (`-ne`), `--extension <path>`
+  (`-e`, repeatable)
 - **Skill restrictions:** `--no-skills` (`-ns`), `--skill <path>` (repeatable)
 - **Context file restrictions:** `--no-context-files` (`-nc`)
 

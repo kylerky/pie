@@ -288,7 +288,9 @@ function buildPiArgs(parsed: ParsedArgs): string[] {
 }
 
 /** Build a human-readable summary of active restrictions. */
-function summarizeRestrictions(parsed: ParsedArgs): Record<string, unknown> | null {
+function summarizeRestrictions(
+  parsed: ParsedArgs,
+): Record<string, unknown> | null {
   const r: Record<string, unknown> = {};
 
   if (parsed.noTools) {
