@@ -192,6 +192,8 @@ Options:
   (`-e`, repeatable)
 - **Skill restrictions:** `--no-skills` (`-ns`), `--skill <path>` (repeatable)
 - **Context file restrictions:** `--no-context-files` (`-nc`)
+- **Model override:** `--provider <name> --model <model>` — specify which LLM
+  provider and model the subagent should use. `--provider` requires `--model`.
 
 Outputs JSON:
 `{ sessionId, sessionName, tmuxSession, windowName, tmuxSocket,

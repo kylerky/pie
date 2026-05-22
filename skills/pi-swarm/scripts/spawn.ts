@@ -8,6 +8,7 @@
  *     [--no-extensions | -ne] [--extension | -e <path>]...
  *     [--no-skills | -ns] [--skill <path>]...
  *     [--no-context-files | -nc]
+ *     [--provider <name> --model <model>]
  *     <name> <initial-prompt>
  *
  * The agent is started as a window in the given session. If no session is
@@ -53,6 +54,9 @@ interface ParsedArgs {
   skillPaths: string[];
   /** Context file restriction flags */
   noContextFiles: boolean;
+  /** Model/provider override */
+  model: string | null;
+  provider: string | null;
 }
 
 function parseArgs(raw: string[]): Effect.Effect<ParsedArgs> {
@@ -71,6 +75,8 @@ function parseArgs(raw: string[]): Effect.Effect<ParsedArgs> {
     let noSkills = false;
     const skillPaths: string[] = [];
     let noContextFiles = false;
+    let model: string | null = null;
+    let provider: string | null = null;
 
     const remaining: string[] = [];
     for (let i = 0; i < args.length; i++) {
@@ -121,6 +127,13 @@ function parseArgs(raw: string[]): Effect.Effect<ParsedArgs> {
         case "-nc":
           noContextFiles = true;
           break;
+        // ── model / provider ──
+        case "--provider":
+          if (i + 1 < args.length) provider = args[++i];
+          break;
+        case "--model":
+          if (i + 1 < args.length) model = args[++i];
+          break;
         // ── positional ──
         default:
           remaining.push(arg);
@@ -143,6 +156,8 @@ function parseArgs(raw: string[]): Effect.Effect<ParsedArgs> {
       noSkills,
       skillPaths,
       noContextFiles,
+      model,
+      provider,
     };
   });
 }
@@ -169,6 +184,9 @@ const program = Effect.gen(function* () {
       "  [--no-context-files | -nc]",
     );
     yield* Console.error(
+      "  [--provider <name> --model <model>]",
+    );
+    yield* Console.error(
       "  <name> <initial-prompt>",
     );
     return yield* Effect.fail(
@@ -176,6 +194,20 @@ const program = Effect.gen(function* () {
         cmd: "spawn.ts",
         args: [],
         stderr: "Missing required arguments: name and initial-prompt",
+      }),
+    );
+  }
+
+  // --provider requires --model
+  if (parsed.provider && !parsed.model) {
+    yield* Console.error(
+      "Error: --provider requires --model to specify which model to use.",
+    );
+    return yield* Effect.fail(
+      new ShellError({
+        cmd: "spawn.ts",
+        args: [],
+        stderr: "--provider specified without --model",
       }),
     );
   }
@@ -283,6 +315,9 @@ function buildPiArgs(parsed: ParsedArgs): string[] {
   for (const skill of parsed.skillPaths) args.push("--skill", skill);
 
   if (parsed.noContextFiles) args.push("--no-context-files");
+
+  if (parsed.provider) args.push("--provider", parsed.provider);
+  if (parsed.model) args.push("--model", parsed.model);
 
   return args;
 }
