@@ -1,13 +1,15 @@
 #!/usr/bin/env -S deno run --allow-all
 /**
- * kill.ts — Terminate a Pi swarm agent by killing its tmux window.
+ * kill.ts — Terminate a Pi swarm agent, attempting graceful shutdown first.
  *
  * Usage:
- *   deno run --allow-all kill.ts [--session <name>] <agent-name>
+ *   deno run --allow-all kill.ts [--session <name>] [--force] [--timeout <seconds>] <agent-name>
  *
- * Kills the named agent window. If it was the last window in the
- * session, the session is also killed. Also sweeps orphaned symlinks
- * in the session-control directory.
+ * Attempts graceful shutdown by sending Escape (abort work) then C-d (exit TUI)
+ * via tmux send-keys. Waits up to --timeout seconds (default 5s) for the window
+ * to close. Falls back to tmux kill-window if the window persists.
+ * Use --force to skip the graceful phase and hard-kill immediately.
+ * Also sweeps orphaned symlinks in the session-control directory.
  */
 
 import { dirname, join, resolve } from "jsr:@std/path";
@@ -16,9 +18,10 @@ import {
   computePaths,
   removeIfExists,
   ShellError,
+  sleep,
   SocketError,
 } from "./lib/common.ts";
-import { killWindow, listAllWindows, swarmSessionName } from "./lib/tmux.ts";
+import { killWindow, listAllWindows, sendKeys, swarmSessionName, waitForWindowDeath } from "./lib/tmux.ts";
 import { platformLayer } from "./lib/cli.ts";
 
 // ── Orphan cleanup ───────────────────────────────────────────────────────────
@@ -67,16 +70,39 @@ const program = Effect.gen(function* () {
   const args = [...Deno.args];
   let sessionName: string | null = null;
 
+  // Parse --session flag
   const sessionIdx = args.indexOf("--session");
   if (sessionIdx !== -1 && sessionIdx + 1 < args.length) {
     sessionName = swarmSessionName(args[sessionIdx + 1]);
     args.splice(sessionIdx, 2);
   }
 
+  // Parse --force flag
+  const forceIdx = args.indexOf("--force");
+  const force = forceIdx !== -1;
+  if (force) {
+    args.splice(forceIdx, 1);
+  }
+
+  // Parse --timeout flag
+  let timeoutSec = 5;
+  const timeoutIdx = args.indexOf("--timeout");
+  if (timeoutIdx !== -1 && timeoutIdx + 1 < args.length) {
+    const val = parseInt(args[timeoutIdx + 1], 10);
+    if (!isNaN(val) && val >= 0) {
+      timeoutSec = val;
+    } else {
+      yield* Console.error(
+        `Invalid timeout value "${args[timeoutIdx + 1]}". Using default (5s).`,
+      );
+    }
+    args.splice(timeoutIdx, 2);
+  }
+
   const raw = args[0];
   if (!raw) {
     yield* Console.error(
-      "Usage: kill.ts [--session <name>] <agent-name>",
+      "Usage: kill.ts [--session <name>] [--force] [--timeout <seconds>] <agent-name>",
     );
     return yield* Effect.fail(
       new ShellError({
@@ -119,22 +145,73 @@ const program = Effect.gen(function* () {
     );
   }
 
-  const killed = yield* killWindow(
-    paths.defaultTmuxSocket,
-    resolveTarget.session,
-    resolveTarget.window,
-  );
+  const target = `${resolveTarget.session}:${resolveTarget.window}`;
 
-  if (killed) {
+  if (force) {
+    // --force: skip graceful phase, go straight to hard kill
+    yield* killWindow(
+      paths.defaultTmuxSocket,
+      resolveTarget.session,
+      resolveTarget.window,
+    );
     yield* Console.log(
-      `Agent "${resolveTarget.window}" in session "${resolveTarget.session}" killed.`,
+      `Agent "${resolveTarget.window}" in session "${resolveTarget.session}" force-killed.`,
     );
   } else {
-    yield* Console.error(
-      `Failed to kill agent "${resolveTarget.window}" in session "${resolveTarget.session}".`,
+    // Attempt graceful shutdown first
+    yield* Console.log(
+      `Attempting graceful shutdown of "${resolveTarget.window}"...`,
     );
+
+    const goneGracefully = yield* pipe(
+      Effect.gen(function* () {
+        // Phase 1: send Escape to abort in-flight work, then C-d to exit TUI
+        yield* sendKeys(paths.defaultTmuxSocket, target, "Escape");
+        yield* sleep(500);
+        yield* sendKeys(paths.defaultTmuxSocket, target, "C-d");
+        // Phase 2: poll for window death
+        return yield* waitForWindowDeath(
+          paths.defaultTmuxSocket,
+          resolveTarget.session,
+          resolveTarget.window,
+          timeoutSec * 1000,
+        );
+      }),
+      Effect.tapError((e) =>
+        Console.error(
+          `Graceful shutdown error: ${e instanceof Error ? e.message : String(e)}`,
+        )
+      ),
+      Effect.catchAll(() => Effect.succeed(false)),
+    );
+
+    if (goneGracefully) {
+      yield* Console.log(
+        `Agent "${resolveTarget.window}" exited gracefully.`,
+      );
+    } else {
+      // Fall through to hard kill
+      yield* Console.log(
+        `Graceful shutdown timed out. Hard-killing "${resolveTarget.window}"...`,
+      );
+      const killed = yield* killWindow(
+        paths.defaultTmuxSocket,
+        resolveTarget.session,
+        resolveTarget.window,
+      );
+      if (killed) {
+        yield* Console.log(
+          `Agent "${resolveTarget.window}" in session "${resolveTarget.session}" hard-killed.`,
+        );
+      } else {
+        yield* Console.error(
+          `Failed to kill agent "${resolveTarget.window}" in session "${resolveTarget.session}".`,
+        );
+      }
+    }
   }
 
+  // Clean up orphaned symlinks in all termination paths
   yield* pipe(
     cleanOrphanedSymlinks(paths.controlDir),
     Effect.catchAll(() => Effect.void),

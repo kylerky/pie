@@ -8,7 +8,7 @@
 
 import { Effect, pipe } from "npm:effect";
 import { CommandExecutor } from "npm:@effect/platform";
-import { sanitizeName, sh, ShellError, shRaw } from "./common.ts";
+import { sanitizeName, sh, ShellError, shRaw, sleep } from "./common.ts";
 
 // ── Session naming ───────────────────────────────────────────────────────────
 
@@ -258,4 +258,58 @@ export const killWindow = (
     }
 
     return true;
+  });
+
+// ── Graceful shutdown helpers ────────────────────────────────────────────────
+
+/**
+ * Send a single keystroke to a tmux pane via `send-keys`.
+ * Used by kill.ts for graceful shutdown (Escape + C-d).
+ */
+export const sendKeys = (
+  tmuxSocket: string,
+  target: string, // "session:window"
+  key: string,
+): Effect.Effect<void, ShellError, CommandExecutor.CommandExecutor> =>
+  Effect.gen(function* () {
+    yield* sh("tmux", ["-S", tmuxSocket, "send-keys", "-t", target, key]);
+  });
+
+/**
+ * Check whether a specific window still exists in a session.
+ * Returns false if the session doesn't exist.
+ */
+export const windowExists = (
+  tmuxSocket: string,
+  sessionName: string,
+  windowName: string,
+): Effect.Effect<boolean, never, CommandExecutor.CommandExecutor> =>
+  pipe(
+    listWindows(tmuxSocket, sessionName),
+    Effect.map((windows) => windows.some((w) => w.name === windowName)),
+  );
+
+/**
+ * Poll for a window to disappear, up to a timeout.
+ * Returns true if the window is gone, false if it's still there after timeout.
+ */
+export const waitForWindowDeath = (
+  tmuxSocket: string,
+  sessionName: string,
+  windowName: string,
+  timeoutMs: number,
+): Effect.Effect<boolean, never, CommandExecutor.CommandExecutor> =>
+  Effect.gen(function* () {
+    const start = Date.now();
+    const pollInterval = 200;
+
+    while (Date.now() - start < timeoutMs) {
+      const exists = yield* windowExists(tmuxSocket, sessionName, windowName);
+      if (!exists) return true;
+      yield* sleep(pollInterval);
+    }
+
+    // Final check
+    const exists = yield* windowExists(tmuxSocket, sessionName, windowName);
+    return !exists;
   });

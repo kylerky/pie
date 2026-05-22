@@ -216,10 +216,14 @@ deno run --allow-all send.ts <session-id> <message> [--mode steer|follow_up] [--
 **kill.ts** — Terminate a member:
 
 ```bash
-deno run --allow-all kill.ts [--session <name>] <agent-name>
+deno run --allow-all kill.ts [--session <name>] [--force] [--timeout <seconds>] <agent-name>
 ```
 
-Kills the window. Last window kills the session. Sweeps orphaned symlinks.
+Attempts graceful shutdown by sending Escape (abort in-flight work) then C-d
+(exit TUI) via `tmux send-keys`. Waits up to `--timeout` seconds (default 5s)
+for the window to close. Falls back to `tmux kill-window` if the window
+persists. Use `--force` to skip the graceful phase and hard-kill immediately.
+Last window kills the session. Sweeps orphaned symlinks.
 
 **wait.ts** — Wait for completion:
 
