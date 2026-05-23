@@ -1,6 +1,6 @@
 ---
 name: org-roam
-description: Capture persistent knowledge using org-roam conventions. Use for recording lessons learned, novel insights, gotchas, and architectural understanding across sessions. Query Emacs for org-roam directory; use qmd for search.
+description: Capture persistent knowledge using org-roam conventions. Use for recording lessons learned, novel insights, gotchas, and architectural understanding across sessions. Query Emacs for org-roam directory.
 ---
 
 # Org-Roam Knowledge Capture
@@ -35,38 +35,46 @@ Don't capture: obvious facts, trivial edits, things you can grep for.
 
 ## File Format
 
-Create notes in `$ROAM_DIR` with the `write` tool.
+Notes live in category subdirectories under =$ROAM_DIR/public/=:
 
-Filename: `$ROAM_DIR/<YYYYMMDDTHHmmss>-<slug>.org`
+- =public/main/<slug>.org= — general knowledge notes
+- =public/project/<slug>.org= — project-specific notes
+- =public/reference/<slug>.org= — reference material
+
+The slug is derived from the title (lowercase, underscores for spaces).
+
+Org-roam auto-generates a UUID for =:ID:=. To create a note without Emacs
+interaction, generate a UUID yourself (e.g., =uuidgen=) and write the file
+directly, then sync the database:
 
 ```
 :PROPERTIES:
-:ID:        <slug>
+:ID:        <uuid>
 :TAGS:      :tag1:tag2:
 :END:
-#+TITLE: One-line summary
+#+title: One-line summary
 
 The insight. Be concrete.
 
 Source: [[file:/path/to/session.jsonl][Context]]
-See also: [[id:related-slug][Description]]
+See also: [[id:related-uuid][Description]]
 ```
 
-The `:ID:` is a kebab-case slug matching the filename slug. Tags are
-colon-delimited: `:gotcha:`, `:pattern:`, `:architecture:`, `:workflow:`, plus
-domain tags (`:pi:`, `:typescript:`, etc.).
+Key formatting rules:
+- =:ID:= is a UUID (e.g., =550e8400-e29b-41d4-a716-446655440000=), not a slug
+- =:TAGS:= is colon-delimited: =:gotcha:=, =:pattern:=, =:architecture:=, etc.
 
-Links between notes: `[[id:slug][display text]]` Links to sources:
-`[[file:/absolute/path][display text]]`
+Links between notes use UUIDs: =[[id:uuid][display text]]=
+Links to external sources: =[[file:/absolute/path][display text]]=
 
 ## Example
 
 ```
 :PROPERTIES:
-:ID:        20250521T143000-file-mutation-queue
+:ID:        550e8400-e29b-41d4-a716-446655440000
 :TAGS:      :gotcha:pi:typescript:concurrency:
 :END:
-#+TITLE: withFileMutationQueue prevents parallel edit races
+#+title: withFileMutationQueue prevents parallel edit races
 
 When Pi runs tool calls in parallel, two tools editing the same file
 can race — both read the original, compute different patches, and
@@ -76,7 +84,7 @@ Wrap mutations in withFileMutationQueue(absolutePath, fn) from
 @earendil-works/pi-coding-agent to serialize per-file edits.
 
 Source: [[file:~/.pi/agent/sessions/--p--/session.jsonl][Building custom tool]]
-See also: [[id:20250521T140000-tool-execution-model][Parallel tool model]]
+See also: [[id:660e8400-e29b-41d4-a716-446655440001][Parallel tool model]]
 ```
 
 ## Workflow
@@ -85,7 +93,8 @@ See also: [[id:20250521T140000-tool-execution-model][Parallel tool model]]
 relevant notes, `read` and extend them with `edit` instead of creating
 duplicates.
 
-**Creating a note:** `write` the .org file, then reindex with qmd and org-roam:
+**Creating a note:** write the .org file to the correct subdirectory
+(=public/main/=, =public/project/=, or =public/reference/=), then reindex:
 
 ```bash
 qmd update
@@ -100,7 +109,7 @@ section-level links that grep misses.
 
 ```bash
 # Backlinks (what links to this note?)
-emacsclient --eval '(org-roam-backlinks-get "slug")'
+emacsclient --eval '(org-roam-backlinks-get (org-roam-node-from-id "uuid"))'
 
 # Run arbitrary SQL on the org-roam database
 emacsclient --eval '(org-roam-db-query [:select [source dest type] :from links :where (= type "id")])'
@@ -120,11 +129,7 @@ Database schema:
 - `nodes` table: `id`, `file`, `title`, `level`, `pos`, `properties`
 - `links` table: `source`, `dest`, `type` (e.g. `"id"`), `properties`
 
-Only fall back to grep when Emacs is not running:
-
-```bash
-grep -rl '\[\[id:slug' "$ROAM_DIR"/*.org
-```
+Only fall back to grep when Emacs is not working.
 
 **If Emacs isn't running,** start it as a daemon:
 
