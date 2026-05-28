@@ -31,7 +31,7 @@ import {
   SocketError,
 } from "./lib/common.ts";
 import { createWindow, killWindow, swarmSessionName } from "./lib/tmux.ts";
-import { getSessionIdFromPane, sendInitialPrompt } from "./lib/control.ts";
+import { sendInitialPrompt, waitForSocket } from "./lib/control.ts";
 import { platformLayer } from "./lib/cli.ts";
 
 // ── Argument parsing ─────────────────────────────────────────────────────────
@@ -223,11 +223,16 @@ const program = Effect.gen(function* () {
   yield* ensureDir(paths.tmuxSocketDir);
   yield* ensureDir(paths.controlDir);
 
+  // Pre-generate a session ID so we know the control socket path up front.
+  // Passing --session-id to pi ensures the session-control extension creates
+  // the socket at ~/.pi/session-control/<sessionId>.sock — no pane scraping needed.
+  const sessionId = crypto.randomUUID();
+
   // Build pi shell args with restriction flags forwarded from spawn.ts
-  const piArgs = buildPiArgs(parsed);
+  const piArgs = buildPiArgs(parsed, sessionId);
 
   // Start the agent as a window in the swarm session.
-  // pi is started with --session-control plus any restriction flags.
+  // pi is started with --session-control --session-id <id> plus any restriction flags.
   yield* createWindow({
     tmuxSocket,
     sessionName,
@@ -237,16 +242,8 @@ const program = Effect.gen(function* () {
     shellArgs: piArgs,
   });
 
-  // Get the session ID directly from the spawned pi process.
-  // The control extension sets PI_SESSION_ID in the process environment
-  // when the session-control socket is ready — we read it from
-  // /proc/<pid>/environ. No socket-directory polling needed.
-  const sessionId = yield* getSessionIdFromPane(
-    tmuxSocket,
-    sessionName,
-    windowName,
-    30_000,
-  ).pipe(
+  // Wait for the known control socket to appear (no pane scraping needed).
+  yield* waitForSocket(paths.controlDir, sessionId, 30_000).pipe(
     Effect.catchAll((e) =>
       Effect.gen(function* () {
         yield* Console.error(
@@ -301,8 +298,8 @@ const program = Effect.gen(function* () {
 // ── Pi args builder ─────────────────────────────────────────────────────────
 
 /** Build the pi shell arguments from parsed spawn flags. */
-function buildPiArgs(parsed: ParsedArgs): string[] {
-  const args: string[] = ["--session-control"];
+function buildPiArgs(parsed: ParsedArgs, sessionId: string): string[] {
+  const args: string[] = ["--session-control", "--session-id", sessionId];
 
   if (parsed.noTools) args.push("--no-tools");
   if (parsed.noBuiltinTools) args.push("--no-builtin-tools");

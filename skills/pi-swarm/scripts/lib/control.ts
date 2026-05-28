@@ -131,49 +131,31 @@ export const listSocketFiles = (
   );
 
 /**
- * Get the session ID of a pi instance running in a tmux window.
- *
- * The control extension displays "session <uuid>" in the TUI footer
- * when --session-control is enabled. We capture the pane output and
- * parse the session ID from it — no /proc or socket polling needed.
+ * Wait for a specific session control socket to appear.
+ * Used with --session-id where the session ID is predetermined.
  */
-export const getSessionIdFromPane = (
-  tmuxSocket: string,
-  sessionName: string,
-  windowName: string,
-  timeoutMs = 30_000,
-): Effect.Effect<
-  string,
-  SocketError | ShellError,
-  CommandExecutor.CommandExecutor
-> =>
+export const waitForSocket = (
+  controlDir: string,
+  sessionId: string,
+  timeoutMs: number,
+): Effect.Effect<void, SocketError> =>
   Effect.gen(function* () {
     const deadline = Date.now() + timeoutMs;
-    const uuidRe =
-      /session\s+([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})/i;
+    const targetPath = join(controlDir, `${sessionId}.sock`);
 
     while (Date.now() < deadline) {
-      const output = yield* sh("tmux", [
-        "-S",
-        tmuxSocket,
-        "capture-pane",
-        "-p",
-        "-t",
-        `${sessionName}:${windowName}`,
-      ]);
-
-      const match = output.match(uuidRe);
-      if (match) {
-        return match[1];
+      try {
+        const stat = Deno.statSync(targetPath);
+        if (stat.isSocket) return;
+      } catch {
+        // Not yet available, retry
       }
-
       yield* sleep(500);
     }
 
     return yield* Effect.fail(
       new SocketError({
-        message:
-          `Timed out after ${timeoutMs}ms waiting for session ID in pane output`,
+        message: `timed out after ${timeoutMs}ms waiting for control socket: ${targetPath}`,
       }),
     );
   });
