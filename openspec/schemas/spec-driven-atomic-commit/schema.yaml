@@ -204,7 +204,7 @@ artifacts:
 
       - Adopt Test-Driven Development. Start each group with failing tests first. When you complete a group, the tests should be passing.
 
-      - Conclude each group with a task to commit the changes
+      - Conclude each group with a task to immediately use git to commit the changes excluding openspec artifacts
 
       - Each task MUST be a checkbox: `- [ ] X.Y Task description`
 
@@ -219,18 +219,21 @@ artifacts:
 
       ## 1. Setup
 
-
       - [ ] 1.1 Create new module structure
 
       - [ ] 1.2 Add dependencies to package.json
 
+      - [ ] 1.3 Immediately use git to commit the project scaffolding excluding openspec artifacts
 
       ## 2. Core Implementation
 
+      - [ ] 2.1 Create test file `tests/data_utils_tests.ts` testing data export and formatting
 
-      - [ ] 2.1 Implement data export function
+      - [ ] 2.2 Implement data export function
 
-      - [ ] 2.2 Add CSV formatting utilities
+      - [ ] 2.3 Add CSV formatting utilities
+
+      - [ ] 2.4 Immediately use git to commit the utility code excluding openspec artifacts
 
       ```
 
