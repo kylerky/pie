@@ -214,6 +214,12 @@ temp file or use `@file`.
 deno run --allow-all list.ts [--json] [--session <name>]
 ```
 
+Matches each tmux window to its control socket via the `@pi-session-id` tmux
+window option (set by spawn.ts at creation time). This identity-based matching
+ensures correct session IDs regardless of stale sockets or enumeration order.
+Windows without the option (pre-existing or from older spawn.ts versions) are
+not shown.
+
 **send.ts** — Send a message (for scripts/debugging):
 
 ```bash
@@ -235,6 +241,26 @@ persists. Use `--force` to skip the graceful phase and hard-kill immediately.
 Last window kills the session. Sweeps orphaned symlinks.
 
 MUST USE `kill.ts` to terminate a member.
+
+Killing an agent also removes its control socket file from
+`~/.pi/session-control/` using the `@pi-session-id` stored in tmux window
+metadata.
+
+**cleanup.ts** — Detect and remove stale sockets and orphan agents:
+
+```bash
+deno run --allow-all cleanup.ts [--dry-run]
+```
+
+Scans `~/.pi/session-control/` for socket files and:
+- **Removes dead sockets** where no Pi process is listening (automatically, or
+  just reports in `--dry-run` mode).
+- **Reports live orphans** — sockets that are alive but have no matching tmux
+  window in any pi-swarm session (these are from deleted or forgotten agents).
+- **Reports healthy agents** — sockets with a matching tmux window.
+
+Run periodically to prevent socket directory pollution, especially after
+sessions that were not properly cleaned up.
 
 **wait.ts** — Wait for completion:
 
@@ -295,3 +321,47 @@ deno run --allow-all kill.ts --session explore implementer
 8. **Verify liveness** with `list.ts` before sending. On failure, check pane
    output with `tmux capture-pane -t pi-swarm-<session>:<window>`.
 9. **Close the swarm loop**
+
+## Session ID Binding
+
+Each spawned agent has its session ID stored in a tmux window user option
+(`@pi-session-id`). This binding is set by `spawn.ts` immediately after window
+creation and provides a durable, identity-based mapping between tmux windows and
+control sockets.
+
+- `spawn.ts` writes the option via `tmux set-window-option @pi-session-id <uuid>`
+- `list.ts` reads the option to resolve each window's correct session ID
+- `kill.ts` reads the option to locate and remove the `.sock` file on termination
+- `cleanup.ts` cross-references options to identify orphan sockets
+
+This eliminates the previous positional matching bug where stale sockets from
+old sessions could be incorrectly assigned to new agents.
+
+## Troubleshooting
+
+### Mismatched Session IDs
+
+If `list.ts` shows the wrong session ID for an agent, or `send_to_session`
+returns unexpected content from an unrelated session:
+
+1. **Check for stale agents**: Run `cleanup.ts --dry-run` to see if old agents
+   from previous sessions are still alive and consuming socket slots.
+2. **Run cleanup**: `cleanup.ts` removes dead sockets. For live orphan agents
+   (shown as warnings), use `kill.ts` or terminate the tmux session directly.
+3. **Verify binding**: Check that the agent's tmux window has `@pi-session-id`
+   set correctly:
+   ```bash
+   tmux show-window-options -t <session>:<window> @pi-session-id
+   ```
+4. **Kill and respawn**: If an agent has a stale or missing binding, kill it
+   with `kill.ts` and respawn.
+
+### Stale Agents Not Cleaned Up
+
+If agents from old sessions persist after their tmux windows are gone:
+
+1. Run `cleanup.ts` to remove dead socket files.
+2. For live orphan sockets, identify the tmux session with
+   `tmux list-sessions` and kill it with `tmux kill-session -t <name>`.
+3. Optionally, manually remove remaining `.sock` files from
+   `~/.pi/session-control/`.
