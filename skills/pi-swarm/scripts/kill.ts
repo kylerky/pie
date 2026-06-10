@@ -21,7 +21,7 @@ import {
   sleep,
   SocketError,
 } from "./lib/common.ts";
-import { killWindow, listAllWindows, sendKeys, swarmSessionName, waitForWindowDeath } from "./lib/tmux.ts";
+import { getWindowOption, killWindow, listAllWindows, sendKeys, swarmSessionName, waitForWindowDeath } from "./lib/tmux.ts";
 import { platformLayer } from "./lib/cli.ts";
 
 // ── Orphan cleanup ───────────────────────────────────────────────────────────
@@ -147,6 +147,14 @@ const program = Effect.gen(function* () {
 
   const target = `${resolveTarget.session}:${resolveTarget.window}`;
 
+  // Read the session ID from tmux window metadata for post-termination cleanup.
+  // If the read fails (e.g., window already gone), sessionId is null and we fall
+  // back to the orphan symlink sweep.
+  const sessionId = yield* pipe(
+    getWindowOption(paths.defaultTmuxSocket, target, "@pi-session-id"),
+    Effect.catchAll(() => Effect.succeed(null)),
+  );
+
   if (force) {
     // --force: skip graceful phase, go straight to hard kill
     yield* killWindow(
@@ -211,7 +219,17 @@ const program = Effect.gen(function* () {
     }
   }
 
-  // Clean up orphaned symlinks in all termination paths
+  // Remove the control socket file if we know the session ID (from @pi-session-id).
+  // This closes the lifecycle loop: spawn creates → kill removes.
+  if (sessionId) {
+    const sockPath = join(paths.controlDir, `${sessionId}.sock`);
+    yield* pipe(
+      removeIfExists(sockPath),
+      Effect.catchAll(() => Effect.void),
+    );
+  }
+
+  // Clean up orphaned symlinks in all termination paths (legacy fallback)
   yield* pipe(
     cleanOrphanedSymlinks(paths.controlDir),
     Effect.catchAll(() => Effect.void),
