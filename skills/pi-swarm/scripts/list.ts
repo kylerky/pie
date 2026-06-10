@@ -84,16 +84,6 @@ const program = Effect.gen(function* () {
         sessionId,
         controlAlive: socketEntry?.alive ?? false,
       });
-    } else {
-      // Legacy window without @pi-session-id — no binding available
-      result.push({
-        name: w.windowName,
-        session: w.sessionName,
-        window: w.windowName,
-        tmuxStatus: w.active ? "active" : "idle",
-        sessionId: null,
-        controlAlive: false,
-      });
     }
   }
 
