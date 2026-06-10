@@ -8,7 +8,7 @@
 
 import { Console, Effect, pipe } from "npm:effect";
 import { computePaths, ShellError, SocketError } from "./lib/common.ts";
-import { listAllWindows, listWindows, swarmSessionName } from "./lib/tmux.ts";
+import { getWindowOption, listAllWindows, listWindows, swarmSessionName } from "./lib/tmux.ts";
 import { listControlSockets } from "./lib/control.ts";
 import { platformLayer } from "./lib/cli.ts";
 
@@ -56,34 +56,59 @@ const program = Effect.gen(function* () {
     { concurrency: 2 },
   );
 
-  const aliveSockets = controlSockets.filter((c) => c.alive);
+  // Build a map from session ID to socket for O(1) identity-based lookup.
+  // This replaces the previous positional array-index matching which could
+  // assign wrong session IDs when stale sockets from other sessions existed.
+  const socketMap = new Map(
+    controlSockets.map((c) => [c.sessionId, c]),
+  );
+  const matchedIds = new Set<string>();
   const result: SubagentInfo[] = [];
-  let socketIdx = 0;
 
   for (const w of allWindows) {
-    const matched = socketIdx < aliveSockets.length
-      ? aliveSockets[socketIdx++]
-      : null;
-    result.push({
-      name: w.windowName,
-      session: w.sessionName,
-      window: w.windowName,
-      tmuxStatus: w.active ? "active" : "idle",
-      sessionId: matched?.sessionId ?? null,
-      controlAlive: matched !== null,
-    });
+    const target = `${w.sessionName}:${w.windowName}`;
+    const sessionId = yield* getWindowOption(
+      paths.defaultTmuxSocket,
+      target,
+      "@pi-session-id",
+    );
+
+    if (sessionId) {
+      matchedIds.add(sessionId);
+      const socketEntry = socketMap.get(sessionId);
+      result.push({
+        name: w.windowName,
+        session: w.sessionName,
+        window: w.windowName,
+        tmuxStatus: w.active ? "active" : "idle",
+        sessionId,
+        controlAlive: socketEntry?.alive ?? false,
+      });
+    } else {
+      // Legacy window without @pi-session-id — no binding available
+      result.push({
+        name: w.windowName,
+        session: w.sessionName,
+        window: w.windowName,
+        tmuxStatus: w.active ? "active" : "idle",
+        sessionId: null,
+        controlAlive: false,
+      });
+    }
   }
 
-  while (socketIdx < aliveSockets.length) {
-    const cs = aliveSockets[socketIdx++];
-    result.push({
-      name: `(orphan-${cs.sessionId.slice(0, 8)})`,
-      session: "?",
-      window: "?",
-      tmuxStatus: "gone",
-      sessionId: cs.sessionId,
-      controlAlive: true,
-    });
+  // Report unmatched alive sockets as orphans
+  for (const cs of controlSockets) {
+    if (cs.alive && !matchedIds.has(cs.sessionId)) {
+      result.push({
+        name: `(orphan-${cs.sessionId.slice(0, 8)})`,
+        session: "?",
+        window: "?",
+        tmuxStatus: "gone",
+        sessionId: cs.sessionId,
+        controlAlive: true,
+      });
+    }
   }
 
   if (jsonMode) {
