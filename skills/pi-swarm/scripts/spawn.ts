@@ -30,7 +30,7 @@ import {
   ShellError,
   SocketError,
 } from "./lib/common.ts";
-import { createWindow, killWindow, swarmSessionName } from "./lib/tmux.ts";
+import { createWindow, killWindow, setWindowOption, swarmSessionName } from "./lib/tmux.ts";
 import { sendInitialPrompt, waitForSocket } from "./lib/control.ts";
 import { platformLayer } from "./lib/cli.ts";
 
@@ -241,6 +241,23 @@ const program = Effect.gen(function* () {
     shellCommand: "pi",
     shellArgs: piArgs,
   });
+
+  // Store the session ID in tmux window metadata for reliable lookup.
+  // Failure to set the option is non-fatal — list.ts will show null for this agent.
+  yield* setWindowOption(
+    tmuxSocket,
+    `${sessionName}:${windowName}`,
+    "@pi-session-id",
+    sessionId,
+  ).pipe(
+    Effect.catchAll((e) =>
+      Effect.gen(function* () {
+        yield* Console.error(
+          `Warning: Could not set @pi-session-id option: ${e.message}`,
+        );
+      })
+    ),
+  );
 
   // Wait for the known control socket to appear (no pane scraping needed).
   yield* waitForSocket(paths.controlDir, sessionId, 30_000).pipe(
