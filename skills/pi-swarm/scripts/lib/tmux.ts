@@ -7,7 +7,7 @@
  */
 
 import { Effect, pipe } from "npm:effect";
-import { CommandExecutor } from "npm:@effect/platform";
+import type { CommandExecutor } from "npm:@effect/platform";
 import { sanitizeName, sh, ShellError, shRaw, sleep } from "./common.ts";
 
 // ── Session naming ───────────────────────────────────────────────────────────
@@ -26,6 +26,45 @@ export const hasSession = (
   pipe(
     shRaw("tmux", ["-S", tmuxSocket, "has-session", "-t", sessionName]),
     Effect.map((result) => result.ok),
+  );
+
+// ── Window options ───────────────────────────────────────────────────────────
+
+/**
+ * Set a tmux window user option.
+ * Used by spawn.ts to store the session ID binding (`@pi-session-id`).
+ */
+export const setWindowOption = (
+  tmuxSocket: string,
+  target: string, // "session:window"
+  key: string,
+  value: string,
+): Effect.Effect<void, ShellError, CommandExecutor.CommandExecutor> =>
+  sh("tmux", ["-S", tmuxSocket, "set-window-option", "-t", target, key, value]);
+
+/**
+ * Read a tmux window user option.
+ * Returns the option value or null if not set / window not found.
+ * Uses `-v` flag to get just the value (no key name prefix).
+ */
+export const getWindowOption = (
+  tmuxSocket: string,
+  target: string, // "session:window"
+  key: string,
+): Effect.Effect<string | null, never, CommandExecutor.CommandExecutor> =>
+  pipe(
+    shRaw("tmux", [
+      "-S", tmuxSocket,
+      "show-window-options",
+      "-v",
+      "-t", target,
+      key,
+    ]),
+    Effect.map((result) => {
+      if (!result.ok || !result.stdout) return null;
+      const value = result.stdout.trim();
+      return value.length > 0 ? value : null;
+    }),
   );
 
 // ── Window CRUD ──────────────────────────────────────────────────────────────
