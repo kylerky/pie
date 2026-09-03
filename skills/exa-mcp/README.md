@@ -1,6 +1,22 @@
 # Exa MCP
 
-Web search and content fetching via Exa MCP, called through `mcporter`.
+Web search and content fetching via the Exa MCP server.
+
+Under Fabric the server is pooled by the `mcp` provider, so `fabric_exec`
+programs call it directly:
+
+```ts
+const res = await mcp.exa.web_search_exa({ query: '...', numResults: 5 });
+return res.text;
+```
+
+Without Fabric, the same tools are reachable through the `mcporter` CLI:
+
+```bash
+mcporter call exa.web_search_exa query="..." numResults=5
+```
+
+See `SKILL.md` for query syntax, result shape, and the research workflow.
 
 ## Installation
 
@@ -21,3 +37,6 @@ Requires `mcporter` with the `exa` server configured in `mcporter.json`:
   }
 }
 ```
+
+Fabric's `mcp` provider discovers servers through mcporter, so this one config
+serves both paths — nothing extra to register.
